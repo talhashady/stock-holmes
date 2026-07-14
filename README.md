@@ -17,9 +17,9 @@ A time-series intelligence system that predicts Gold spot price direction (`UP`/
 
 ---
 
-## 📝 Project Overview
+## 📝 About the Project
 
-Stock Holmes is a predictive system designed to capture short-horizon inefficiencies in the Gold spot market (XAU/USD). Rather than attempting to regress exact future prices (which is heavily dominated by noise at short timeframes), this system reframes the target into a **3-way classification problem**:
+Stock Holmes is a predictive system designed to capture short-horizon inefficiencies in the Gold spot market (XAU/USD), with forecasts viewable in real-time on the [live dashboard](https://stockholmes.streamlit.app/). Rather than attempting to regress exact future prices (which is heavily dominated by noise at short timeframes), this system reframes the target into a **3-way classification problem**:
 *   📈 **UP**: Price change > +0.01% (+10 bps)
 *   📉 **DOWN**: Price change < -0.01% (-10 bps)
 *   ➡️ **FLAT**: Price change within ±0.01%
