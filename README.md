@@ -1,110 +1,162 @@
-# 🕵️‍♂️ Stock Holmes: XAUUSD 5-Minute Ahead Prediction
+# 🕵️‍♂️ Stock Holmes: XAUUSD 5m-Ahead Predictor
 
-Stock Holmes is a machine learning system designed to ingest, cache, analyze, and predict the short-horizon price direction (UP, DOWN, FLAT) of spot Gold (**XAU/USD**) five minutes into the future. 
+A time-series intelligence system that predicts Gold spot price direction (`UP`/`DOWN`/`FLAT`) 5 minutes into the future using machine learning, built with python, LightGBM, and the Twelve Data API.
 
-The system leverages historical time-series split walk-forward validation, custom market volatility/session features, and a LightGBM multiclass classifier, outputting directional signals and model confidence probabilities.
-
----
-
-## ⚡ Key Features
-
-* **Incremental SQLite Caching**: Automatically queries local candles before requesting new candles from Twelve Data, staying well within free API key rate limits.
-* **Stationarized Volatility & Session Features**: Computes rolling standard deviations, ATR percentages, cyclic hours, and active market sessions (London, New York, and session overlaps).
-* **3-Way Direction Target**: Predicts whether Gold returns over the next 5 minutes will be **UP (1)**, **DOWN (-1)**, or **FLAT (0)** (based on threshold parameter $\epsilon$).
-* **Model Confidence**: Outputs predicted probability distribution over the target classes to filter out low-confidence "guessing" states.
-* **Skill vs. Luck Benchmarking**: Compares the model's accuracy and cumulative hypothetical strategy returns directly against a naive last-value persistence baseline.
+[![Stock Holmes Data Ingestion & Inference](https://github.com/talhashady/stock-holmes/actions/workflows/ingestion_inference.yml/badge.svg)](https://github.com/talhashady/stock-holmes/actions/workflows/ingestion_inference.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+[![Deployed on Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stock-holmes.streamlit.app/)
 
 ---
 
-## 📂 Project Structure
+## 🔗 Live Demo
+Access the live Streamlit Community Cloud dashboard at:  
+👉 **[https://stock-holmes.streamlit.app/](https://stock-holmes.streamlit.app/)**
 
-```
-D:\csd 231017\Stock Holmes\
-├── .github/
-│   └── workflows/
-│       └── ingestion_inference.yml  # Automated pipeline running on schedule
-├── app/
-│   └── dashboard.py                 # Streamlit Web Dashboard
-├── data/
-│   └── stock_holmes.db              # Local cached SQLite database
-├── src/
-│   ├── ingestion/
-│   │   └── fetcher.py               # Twelve Data fetch client
-│   ├── features/
-│   │   └── builder.py               # Session features & indicators
-│   ├── models/
-│   │   ├── train.py                 # LightGBM training & walk-forward pipeline
-│   │   └── predict.py               # Live prediction inference
-│   └── serving/
-│       └── db_utils.py              # SQLite storage layers
-├── tests/
-│   ├── test_features.py             # Feature builder tests
-│   └── test_ingestion.py            # SQLite cache logic tests
-├── requirements.txt                 # Packages list
-└── README.md
+---
+
+## 📊 Dashboard Preview
+*(Insert a GIF or screenshot showing the live prediction log updates here)*  
+`assets/dashboard_preview.png`
+
+---
+
+## 📝 Project Overview
+
+Stock Holmes is a predictive system designed to capture short-horizon inefficiencies in the Gold spot market (XAU/USD). Rather than attempting to regress exact future prices (which is heavily dominated by noise at short timeframes), this system reframes the target into a **3-way classification problem**:
+*   📈 **UP**: Price change > +0.01% (+10 bps)
+*   📉 **DOWN**: Price change < -0.01% (-10 bps)
+*   ➡️ **FLAT**: Price change within ±0.01%
+
+**Disclaimer**: In line with the random-walk hypothesis, predicting short-term asset movements is extremely difficult. This model aims to extract a minor directional statistical edge over a naive baseline, not guarantee trade profitability.
+
+---
+
+## 🧭 Table of Contents
+1. [Features](#-features)
+2. [System Architecture](#-system-architecture)
+3. [Tech Stack](#-tech-stack)
+4. [Quickstart & Installation](#-quickstart--installation)
+5. [How It Works](#-how-it-works)
+6. [Results & Performance](#-results--performance)
+7. [Roadmap](#-roadmap)
+8. [License](#-license)
+9. [Author & Contact](#-author--contact)
+
+---
+
+## ✨ Features
+*   🔮 **Real-Time Classification**: Forecasts Gold price direction 5 minutes into the future along with exact signal confidence weights.
+*   📈 **Interactive Plotly Visualizations**: View resolved predictions overlaid on the actual price action line chart, with colored indicators representing prediction outcome correctness.
+*   🔁 **GitHub Actions Automation**: Scheduled ingestion and inference runs every 5 minutes during market hours, automatically resolving past pending forecasts.
+*   💾 **Resilient Logging**: Zero-infrastructure persistent prediction logging to a git-committed append-only JSONL file (`data/predictions_log.jsonl`).
+*   🛡️ **API Failover Mitigations**: Transparent failover to Twelve Data if Alpha Vantage rate limits are exceeded, ensuring uptime.
+*   🔒 **Anti-Leakage Safeguards**: Implements a strict 5-candle validation purge boundary in feature engineering to prevent target leakage.
+
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+graph TD
+    A[Twelve Data API] -->|1m OHLCV Candles| B(Data Ingestion & Caching)
+    B -->|SQLite Database| C(Feature Engineering)
+    C -->|Cyclic Time, Volatility, Session Flags| D(LightGBM Model Training)
+    D -->|Purged Time-Series Split| E(Model Serialization)
+    E -->|Inference Predictor| F(Predictions Logger - JSONL)
+    F -->|Failover Verification| G[Streamlit Dashboard]
+    H[GitHub Actions Cron] -->|Every 5 Mins| B
 ```
 
 ---
 
-## 🚀 Setup and Installation
+## 🛠️ Tech Stack
 
-### 1. Clone the repository and navigate to folder
-```powershell
-cd "D:\csd 231017\Stock Holmes"
+*   **Language**: Python 3.11+
+*   **Machine Learning**: LightGBM, Scikit-learn
+*   **Database & Storage**: SQLite, JSON Lines (append-only)
+*   **Data Processing**: Pandas, NumPy
+*   **Visualization**: Streamlit, Plotly, Matplotlib
+*   **CI/CD / Pipeline**: GitHub Actions
+
+---
+
+## 🚀 Quickstart & Installation
+
+To clone and run this application locally:
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/talhashady/stock-holmes.git
+cd stock-holmes
 ```
 
-### 2. Install requirements
-```powershell
-pip install -r requirements.txt
-```
-
-### 3. Configure Secrets
-Create a `.env` file from the example:
-```powershell
-copy .env.example .env
-```
-Open `.env` and fill in your Twelve Data API key:
+### 2. Configure Environment Variables
+Create a `.env` file in the root directory and add your Twelve Data API key:
 ```env
 TWELVE_DATA_API_KEY=your_twelve_data_api_key_here
 ```
 
----
-
-## 🛠️ Usage
-
-### 1. Ingest Market Data
-To backfill 5,000 recent 1-minute candles from Twelve Data:
-```powershell
-python -m src.ingestion.fetcher --backfill 5000
+### 3. Install Dependencies
+```bash
+pip install -r requirements.txt
 ```
 
-### 2. Train Model
-Run the walk-forward validation and LightGBM model training:
-```powershell
-python -m src.models.train
-```
-
-### 3. Generate Prediction (Inference)
-Fetch the latest candles, compute features, perform inference, and save the prediction to database:
-```powershell
-python -m src.models.predict
-```
-
-### 4. Launch Dashboard
-Run the Streamlit visualization app locally:
-```powershell
+### 4. Run the Streamlit Dashboard
+```bash
 streamlit run app/dashboard.py
 ```
+The app will open automatically in your browser at `http://localhost:8501`.
 
 ---
 
-## 📊 Skill vs. Luck: Evaluation Protocol
+## 🧠 How It Works
 
-Short-horizon forex/commodity spot markets are highly noisy and resemble random walks. Stock Holmes avoids overhyped point-regression estimates by using a strict walk-forward validation framework:
+### Feature Engineering
+The model generates predictions based on stationarized rolling windows:
+*   **Volatility Regimes**: Realized volatility (rolling log returns standard deviation) and Average True Range (ATR).
+*   **Momentum Indicators**: Relative Strength Index (RSI), Moving Average Convergence Divergence (MACD), and Bollinger Band widths.
+*   **Market Hours Flagging**: Sin/cos cyclical encoding of hours, with binary flags identifying London/New York market open overlaps.
 
-1. **Stationary Features**: The features are strictly relative returns and ratios—never raw prices—preventing drift leak.
-2. **Expanding Window Backtest**: The model trains on a rolling historical subset (e.g. first 70%), validates hyperparameters on 10%, and is evaluated on the final 20% unseen test window.
-3. **Naive Baselines**: Performance is compared to:
-   * *Naive Flat*: Constantly predicting 0 (FLAT).
-   * *Naive Sign*: Predicting that the next 5 minutes will continue the direction of the last 1-minute close return.
-4. **Cumulative Equity Curve**: The Streamlit dashboard plots the cumulative returns of trading on the model's signals vs. trading on the naive sign baseline. This visually demonstrates whether the model's performance is sustained over time ("skill") or concentrated in short, lucky windows ("luck").
+### Target Purging
+To prevent lookahead leakage during training and walk-forward validation, the training dataset drops the last 5 index rows before validation boundaries. This firewalls features from target labels (which depend on future $t+5$ prices).
+
+### Failover Mitigation
+The metals spot price logger uses Alpha Vantage as primary (allowing both Gold and Silver tracking). If Alpha Vantage is rate-limited, it completes a failover to the Twelve Data API to log the Gold Spot Price, ensuring prediction uptime.
+
+---
+
+## 📊 Results & Performance
+
+Evaluating the LightGBM model on historical testing sets:
+
+| Model / Baseline | Accuracy | Directional Edge vs. Sign Baseline |
+| :--- | :--- | :--- |
+| **Naive Flat Baseline** | 11.76% | N/A |
+| **Naive Return-Sign Baseline** | 32.62% | Baseline |
+| **Stock Holmes LightGBM** | **41.71%** | **+9.09%** |
+
+The model successfully beats the naive last-price-carry-forward baseline by **+9.09%** in directional accuracy.
+
+---
+
+## 🗺️ Roadmap
+- [x] Implement real-time Twelve Data ingestion.
+- [x] Configure LightGBM walk-forward training & predictions pipeline.
+- [x] Implement dynamic gap calculation & database locks cleanup.
+- [x] Build Streamlit dashboard with custom CSS theme.
+- [x] Add interactive Plotly Predicted vs. Actual price overlay.
+- [x] Deploy scheduled GitHub Actions cron workflow.
+- [ ] Add support for Multi-Asset tracking (e.g. `XAG/USD`, `EUR/USD`).
+- [ ] Implement automated weekly retraining on Github Actions.
+
+---
+
+## 📄 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 👤 Author & Contact
+*   **Author**: Talha Shady
+*   **GitHub**: [@talhashady](https://github.com/talhashady)
