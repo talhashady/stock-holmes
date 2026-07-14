@@ -134,7 +134,7 @@ def sync_data_from_github():
     import os
     
     # Only run sync on Streamlit Cloud
-    if not os.path.exists("/app/stock-holmes"):
+    if not (os.path.exists("/app/stock-holmes") or os.path.exists("/mount/src/stock-holmes")):
         return
         
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
