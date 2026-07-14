@@ -1,4 +1,5 @@
 import os
+import sys
 import logging
 import pickle
 import pandas as pd
@@ -51,6 +52,66 @@ def get_trained_model():
         train_pipeline()
     with open(MODEL_PATH, "rb") as f:
         return pickle.load(f)
+
+def check_live_regression(log_path: str, window_size: int = 30, threshold: float = 0.90) -> None:
+    """Reads the latest predictions from predictions_log.jsonl and checks for model collapse."""
+    if not os.path.exists(log_path):
+        return
+        
+    records = []
+    with open(log_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line_str = line.strip()
+            if line_str:
+                try:
+                    records.append(json.loads(line_str))
+                except Exception:
+                    pass
+                    
+    if len(records) < 10:
+        # Not enough history to check collapse yet
+        return
+        
+    # Get last window_size predictions
+    recent_records = records[-window_size:]
+    recent_preds = [r.get("predicted") for r in recent_records if r.get("predicted")]
+    
+    if not recent_preds:
+        return
+        
+    total = len(recent_preds)
+    counts = {}
+    for pred in recent_preds:
+        counts[pred] = counts.get(pred, 0) + 1
+        
+    logger.info(f"Checking rolling predictions distribution over last {total} records: {counts}")
+    
+    warnings_path = os.path.join(os.path.dirname(log_path), "warnings.log")
+    
+    majority_class = None
+    majority_pct = 0.0
+    for pred, count in counts.items():
+        pct = count / total
+        if pct > majority_pct:
+            majority_pct = pct
+            majority_class = pred
+            
+    if majority_pct >= threshold:
+        msg = f"[CRITICAL MODEL COLLAPSE] Over the last {total} predictions, {majority_class} accounts for {majority_pct:.1%} of all outcomes. Triggering regression warning."
+        logger.error(msg)
+        
+        # Write to warnings.log
+        with open(warnings_path, "a", encoding="utf-8") as wf:
+            wf.write(msg + "\n")
+            
+        sys.stderr.write(msg + "\n")
+    else:
+        # Clean up warnings.log if model is healthy
+        if os.path.exists(warnings_path):
+            try:
+                os.remove(warnings_path)
+            except Exception:
+                pass
 
 def predict_latest(flat_threshold_pct: float = 0.0001) -> Optional[Dict[str, Any]]:
     """
@@ -108,6 +169,12 @@ def predict_latest(flat_threshold_pct: float = 0.0001) -> Optional[Dict[str, Any
     
     if backfilled_count > 0 or jsonl_resolved > 0:
         logger.info(f"Backfilled actual target performance for {backfilled_count} past SQL predictions and {jsonl_resolved} JSONL predictions (aligned to DB path).")
+        
+    # Run live regression distribution check
+    try:
+        check_live_regression(get_log_path())
+    except Exception as e:
+        logger.warning(f"Error executing live regression checks: {e}")
         
     return {
         "timestamp": latest_ts,

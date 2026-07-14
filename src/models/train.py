@@ -49,15 +49,15 @@ def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray, y_pred_prob: np
         "total_test_samples": int(total)
     }
 
-def train_pipeline(flat_threshold_pct: float = 0.0001, test_ratio: float = 0.2, val_ratio: float = 0.1) -> Dict[str, Any]:
-    """Runs data loading, feature building, walk-forward splitting, training, and evaluation."""
+def train_pipeline(flat_threshold_pct: float = 0.0001, test_ratio: float = 0.2, val_ratio: float = 0.1, balance_strategy: str = "class_weight") -> Dict[str, Any]:
+    """Runs data loading, feature building, walk-forward splitting, training, and evaluation with class balancing."""
     logger.info("Loading candles from SQLite database...")
     df_raw = get_all_candles()
     
     if len(df_raw) < 500:
         raise ValueError(f"Insufficient candle data in database ({len(df_raw)} rows). Need at least 500 candles to train.")
         
-    logger.info(f"Building features for {len(df_raw)} candles...")
+    logger.info(f"Building features for {len(df_raw)} candles with flat threshold {flat_threshold_pct}...")
     df_features, feature_cols = build_features_df(df_raw, is_training=True, flat_threshold_pct=flat_threshold_pct)
     
     # Sort chronologically to prevent leak
@@ -87,8 +87,34 @@ def train_pipeline(flat_threshold_pct: float = 0.0001, test_ratio: float = 0.2, 
     # Map back to original targets for evaluation
     y_test_orig = y_test.values - 1
     
+    # Apply balancing strategy on training set
+    sample_weights = None
+    if balance_strategy == "class_weight":
+        from sklearn.utils.class_weight import compute_sample_weight
+        sample_weights = compute_sample_weight(class_weight="balanced", y=y_train)
+        logger.info("Applying balanced class weighting to training set.")
+    elif balance_strategy == "resample":
+        # Stratified resampling to balance classes in the training set
+        df_temp = X_train.copy()
+        df_temp["target_label"] = y_train
+        class_counts = y_train.value_counts()
+        max_size = class_counts.max() if not class_counts.empty else 0
+        
+        resampled_classes = []
+        for label in class_counts.index:
+            group = df_temp[df_temp["target_label"] == label]
+            if len(group) > 0:
+                resampled_group = group.sample(max_size, replace=True, random_state=42)
+                resampled_classes.append(resampled_group)
+            
+        if resampled_classes:
+            df_resampled = pd.concat(resampled_classes, axis=0).sample(frac=1.0, random_state=42).reset_index(drop=True)
+            X_train = df_resampled.drop(columns=["target_label"])
+            y_train = df_resampled["target_label"]
+            logger.info(f"Oversampled training set to size {len(X_train)} (balanced classes).")
+            
     # Setup LightGBM datasets
-    train_data = lgb.Dataset(X_train, label=y_train)
+    train_data = lgb.Dataset(X_train, label=y_train, weight=sample_weights)
     val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)
     
     params = {
@@ -112,7 +138,7 @@ def train_pipeline(flat_threshold_pct: float = 0.0001, test_ratio: float = 0.2, 
         train_data,
         num_boost_round=1000,
         valid_sets=[train_data, val_data],
-        callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(0)]
+        callbacks=[lgb.early_stopping(100, verbose=False), lgb.log_evaluation(0)]
     )
     
     # Predict on test set
@@ -121,8 +147,38 @@ def train_pipeline(flat_threshold_pct: float = 0.0001, test_ratio: float = 0.2, 
     
     # Evaluate
     metrics = evaluate_predictions(y_test_orig, preds_class, preds_prob)
-    logger.info(f"Test Accuracy: {metrics.get('accuracy', 0.0):.4f} (Naive Flat: {metrics.get('naive_flat_accuracy', 0.0):.4f})")
     
+    # Naive baseline: always predict majority class of test set
+    test_counts = pd.Series(y_test_orig).value_counts()
+    majority_test_class = test_counts.idxmax() if not test_counts.empty else 0
+    naive_majority_acc = np.mean(y_test_orig == majority_test_class)
+    metrics["naive_majority_accuracy"] = float(naive_majority_acc)
+    
+    logger.info(f"Test Accuracy: {metrics.get('accuracy', 0.0):.4f} (Naive Flat: {metrics.get('naive_flat_accuracy', 0.0):.4f})")
+    logger.info(f"Naive Majority Class Baseline Accuracy: {naive_majority_acc:.4f}")
+    
+    # Model's class-wise prediction distribution on Validation Set (Step 4 checks)
+    val_preds_prob = model.predict(X_val)
+    val_preds_class = np.argmax(val_preds_prob, axis=1) - 1
+    val_counts = pd.Series(val_preds_class).value_counts(normalize=True)
+    
+    majority_pred_class = None
+    majority_pred_pct = 0.0
+    for val, pct in val_counts.items():
+        if pct > majority_pred_pct:
+            majority_pred_pct = pct
+            majority_pred_class = val
+            
+    metrics["validation_class_distribution"] = {str(int(k)): float(v) for k, v in val_counts.items()}
+    metrics["model_collapsed"] = bool(majority_pred_pct > 0.90)
+    metrics["best_iteration"] = int(model.best_iteration)
+    metrics["num_trees"] = int(model.num_trees())
+    
+    if metrics["model_collapsed"]:
+        logger.warning(f"⚠️ REGRESSION WARNING: Model prediction distribution collapsed! Class {majority_pred_class} accounts for {majority_pred_pct:.1%} of validation set predictions.")
+    else:
+        logger.info(f"Model prediction distribution check passed: Max class percentage is {majority_pred_pct:.1%}")
+        
     # Naive carry-forward return-sign baseline evaluation
     # Checks if next 5-min return direction matches last 1-min return direction
     last_1m_ret = X_test["return_1m"].values
@@ -144,10 +200,7 @@ def train_pipeline(flat_threshold_pct: float = 0.0001, test_ratio: float = 0.2, 
     test_timestamps = df_features["timestamp"].iloc[train_size+val_size:].values
     target_returns = df_features["target_return"].iloc[train_size+val_size:].values
     
-    # Strategy returns:
-    # If prediction is 1, long (+1 * return)
-    # If prediction is -1, short (-1 * return)
-    # If prediction is 0, flat (0 * return)
+    # Strategy returns
     strategy_rets = preds_class * target_returns
     
     # Baseline signals (carry forward last sign)
