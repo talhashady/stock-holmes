@@ -129,9 +129,50 @@ if st.sidebar.button("🎯 Run Inference (Predict)"):
         except Exception as e:
             st.sidebar.error(f"Inference error: {e}")
 
+def sync_data_from_github():
+    import urllib.request
+    import os
+    
+    # Only run sync on Streamlit Cloud
+    if not os.path.exists("/app/stock-holmes"):
+        return
+        
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(base_dir, "data", "stock_holmes.db")
+    log_path = os.path.join(base_dir, "data", "predictions_log.jsonl")
+    metrics_path = os.path.join(base_dir, "src", "models", "metrics.json")
+    
+    urls = {
+        db_path: "https://raw.githubusercontent.com/talhashady/stock-holmes/main/data/stock_holmes.db",
+        log_path: "https://raw.githubusercontent.com/talhashady/stock-holmes/main/data/predictions_log.jsonl",
+        metrics_path: "https://raw.githubusercontent.com/talhashady/stock-holmes/main/src/models/metrics.json"
+    }
+    
+    for path, url in urls.items():
+        temp_path = path + ".tmp"
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                content = response.read()
+                if len(content) > 0:
+                    with open(temp_path, "wb") as f:
+                        f.write(content)
+                    if os.path.exists(temp_path):
+                        if os.path.exists(path):
+                            os.remove(path)
+                        os.rename(temp_path, path)
+        except Exception:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+
 # ----------------- DATA LOADING -----------------
 @st.cache_data(ttl=10)
 def load_dashboard_data():
+    sync_data_from_github()
     preds = get_predictions_history()
     candles = get_all_candles()
     
