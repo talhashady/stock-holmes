@@ -162,7 +162,8 @@ def sync_data_from_github():
                         if os.path.exists(path):
                             os.remove(path)
                         os.rename(temp_path, path)
-        except Exception:
+        except Exception as e:
+            print(f"[SYNC ERROR] Failed to sync {url} to {path}: {e}")
             if os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
@@ -172,7 +173,76 @@ def sync_data_from_github():
 # ----------------- DATA LOADING -----------------
 @st.cache_data(ttl=10)
 def load_dashboard_data():
-    sync_data_from_github()
+    # If running on Streamlit Cloud, fetch directly from GitHub to bypass dirty/conflicted local checkout files
+    if os.path.exists("/app/stock-holmes") or os.path.exists("/mount/src/stock-holmes"):
+        try:
+            # 1. Fetch predictions history log directly from GitHub
+            preds_url = "https://raw.githubusercontent.com/talhashady/stock-holmes/main/data/predictions_log.jsonl"
+            preds = pd.read_json(preds_url, lines=True)
+            
+            if not preds.empty:
+                preds["timestamp"] = preds["timestamp"].astype(str)
+                if "predicted" in preds.columns:
+                    preds["predicted_direction"] = preds["predicted"].map({"UP": 1, "DOWN": -1, "FLAT": 0})
+                else:
+                    preds["predicted_direction"] = 0
+                    
+                if "actual_close" in preds.columns and "spot_price_at_prediction" in preds.columns:
+                    actual_dir = []
+                    for _, row in preds.iterrows():
+                        ac = row["actual_close"]
+                        sp = row["spot_price_at_prediction"]
+                        if pd.isna(ac) or ac is None or pd.isna(sp) or sp is None or sp == 0:
+                            actual_dir.append(np.nan)
+                        else:
+                            change = (ac - sp) / sp
+                            if change > 0.0001:
+                                actual_dir.append(1)
+                            elif change < -0.0001:
+                                actual_dir.append(-1)
+                            else:
+                                actual_dir.append(0)
+                    preds["actual_direction"] = actual_dir
+                else:
+                    preds["actual_direction"] = np.nan
+                    
+                if "spot_price_at_prediction" in preds.columns:
+                    preds["current_close"] = preds["spot_price_at_prediction"]
+                    
+                preds = preds.sort_values(by="timestamp", ascending=False).reset_index(drop=True)
+            
+            # 2. Download sqlite database to /tmp/ to bypass file lock on container's local db
+            import urllib.request
+            import sqlite3
+            
+            db_url = "https://raw.githubusercontent.com/talhashady/stock-holmes/main/data/stock_holmes.db"
+            temp_db = "/tmp/stock_holmes_cloud.db"
+            
+            os.makedirs(os.path.dirname(temp_db), exist_ok=True)
+            req = urllib.request.Request(db_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                with open(temp_db, "wb") as f:
+                    f.write(response.read())
+            
+            conn = sqlite3.connect(temp_db)
+            candles = pd.read_sql_query("SELECT * FROM candles ORDER BY timestamp ASC", conn)
+            conn.close()
+            
+            # 3. Fetch training metrics directly from GitHub
+            metrics_url = "https://raw.githubusercontent.com/talhashady/stock-holmes/main/src/models/metrics.json"
+            train_metrics = None
+            try:
+                req_metrics = urllib.request.Request(metrics_url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req_metrics, timeout=5) as resp:
+                    train_metrics = json.loads(resp.read().decode("utf-8"))
+            except Exception:
+                pass
+                
+            return preds, candles, train_metrics
+        except Exception as cloud_err:
+            st.sidebar.warning(f"Cloud load fallback: {cloud_err}")
+            
+    # Local fallback
     preds = get_predictions_history()
     candles = get_all_candles()
     
