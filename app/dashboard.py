@@ -133,8 +133,9 @@ def sync_data_from_github():
     import urllib.request
     import os
     
-    # Only run sync on Streamlit Cloud
-    if not (os.path.exists("/app/stock-holmes") or os.path.exists("/mount/src/stock-holmes")):
+    # Only run sync on Streamlit Cloud (check path prefix to handle casing /mount/src/Stock-Holmes)
+    abs_path = os.path.abspath(__file__).replace("\\", "/")
+    if not (abs_path.startswith("/app/") or abs_path.startswith("/mount/")):
         return
         
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -174,7 +175,8 @@ def sync_data_from_github():
 @st.cache_data(ttl=10)
 def load_dashboard_data():
     # If running on Streamlit Cloud, fetch directly from GitHub to bypass dirty/conflicted local checkout files
-    if os.path.exists("/app/stock-holmes") or os.path.exists("/mount/src/stock-holmes"):
+    abs_path = os.path.abspath(__file__).replace("\\", "/")
+    if abs_path.startswith("/app/") or abs_path.startswith("/mount/"):
         try:
             # 1. Fetch predictions history log directly from GitHub
             preds_url = "https://raw.githubusercontent.com/talhashady/stock-holmes/main/data/predictions_log.jsonl"
