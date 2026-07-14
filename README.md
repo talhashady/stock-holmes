@@ -114,8 +114,17 @@ The model generates predictions based on stationarized rolling windows:
 *   **Momentum Indicators**: Relative Strength Index (RSI), Moving Average Convergence Divergence (MACD), and Bollinger Band widths.
 *   **Market Hours Flagging**: Sin/cos cyclical encoding of hours, with binary flags identifying London/New York market open overlaps.
 
+### Class Balancing & Early Stopping Hardening
+Due to session-based volatility changes, the training set target distribution is heavily dominated by `FLAT` labels (76%), while the validation set consists mostly of active price movements (83% `UP/DOWN`). 
+*   **Balanced Class Weighting**: To prevent model collapse, Stock Holmes applies balanced sample weights inversely proportional to class frequencies to the LightGBM dataset.
+*   **Relaxed Early Stopping**: Early stopping patience is configured to 100 rounds, ensuring the model trains past the initial rounds and learns predictive price features.
+
 ### Target Purging
 To prevent lookahead leakage during training and walk-forward validation, the training dataset drops the last 5 index rows before validation boundaries. This firewalls features from target labels (which depend on future $t+5$ prices).
+
+### Automated Regression Monitoring
+*   **Post-Training Check**: The pipeline monitors validation prediction distribution, raising warning flags if a single class accounts for `>90%` of predictions.
+*   **Live Serving Check**: A background parser evaluates the last 30 logs in `predictions_log.jsonl` on every inference run, writing alert states to `data/warnings.log` if live forecasts collapse.
 
 ### Failover Mitigation
 The metals spot price logger uses Alpha Vantage as primary (allowing both Gold and Silver tracking). If Alpha Vantage is rate-limited, it completes a failover to the Twelve Data API to log the Gold Spot Price, ensuring prediction uptime.
@@ -124,15 +133,16 @@ The metals spot price logger uses Alpha Vantage as primary (allowing both Gold a
 
 ## 📊 Results & Performance
 
-Evaluating the LightGBM model on historical testing sets:
+Evaluating the hardened LightGBM model on historical testing sets:
 
-| Model / Baseline | Accuracy | Directional Edge vs. Sign Baseline |
+| Model / Baseline | Accuracy | Directional Edge vs. Baseline |
 | :--- | :--- | :--- |
-| **Naive Flat Baseline** | 11.76% | N/A |
-| **Naive Return-Sign Baseline** | 32.62% | Baseline |
-| **Stock Holmes LightGBM** | **41.71%** | **+9.09%** |
+| **Naive Flat Baseline** | 15.81% | N/A |
+| **Naive Return-Sign Baseline** | 34.75% | -8.72% |
+| **Naive Majority Class Baseline** | 43.47% | Baseline |
+| **Stock Holmes LightGBM (Balanced)** | **47.11%** | **+3.64%** |
 
-The model successfully beats the naive last-price-carry-forward baseline by **+9.09%** in directional accuracy.
+The model successfully beats the naive majority class baseline by **+3.64%** and the momentum return-sign baseline by **+12.36%** in directional accuracy.
 
 ---
 
