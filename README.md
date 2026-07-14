@@ -5,13 +5,9 @@ A time-series intelligence system that predicts Gold spot price direction (`UP`/
 [![Stock Holmes Data Ingestion & Inference](https://github.com/talhashady/stock-holmes/actions/workflows/ingestion_inference.yml/badge.svg)](https://github.com/talhashady/stock-holmes/actions/workflows/ingestion_inference.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
-[![Deployed on Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stock-holmes.streamlit.app/)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stockholmes.streamlit.app/)
 
----
-
-## 🔗 Live Demo
-Access the live Streamlit Community Cloud dashboard at:  
-👉 **[https://stock-holmes.streamlit.app/](https://stock-holmes.streamlit.app/)**
+🔗 **[Live Demo](https://stockholmes.streamlit.app/)**
 
 ---
 
@@ -39,15 +35,14 @@ Stock Holmes is a predictive system designed to capture short-horizon inefficien
 4. [Quickstart & Installation](#-quickstart--installation)
 5. [How It Works](#-how-it-works)
 6. [Results & Performance](#-results--performance)
-7. [Roadmap](#-roadmap)
-8. [License](#-license)
-9. [Author & Contact](#-author--contact)
+7. [License](#-license)
+8. [Author & Contact](#-author--contact)
 
 ---
 
 ## ✨ Features
 *   🔮 **Real-Time Classification**: Forecasts Gold price direction 5 minutes into the future along with exact signal confidence weights.
-*   📈 **Interactive Plotly Visualizations**: View resolved predictions overlaid on the actual price action line chart, with colored indicators representing prediction outcome correctness.
+*   📈 **Interactive Plotly Visualizations**: View resolved predictions in the [live app](https://stockholmes.streamlit.app/), overlaid on the actual price action line chart with colored indicators representing prediction correctness.
 *   🔁 **GitHub Actions Automation**: Scheduled ingestion and inference runs every 5 minutes during market hours, automatically resolving past pending forecasts.
 *   💾 **Resilient Logging**: Zero-infrastructure persistent prediction logging to a git-committed append-only JSONL file (`data/predictions_log.jsonl`).
 *   🛡️ **API Failover Mitigations**: Transparent failover to Twelve Data if Alpha Vantage rate limits are exceeded, ensuring uptime.
@@ -82,6 +77,8 @@ graph TD
 ---
 
 ## 🚀 Quickstart & Installation
+
+If you just want to see the system running without installing it locally, check out the [Live Demo](https://stockholmes.streamlit.app/).
 
 To clone and run this application locally:
 
@@ -140,18 +137,6 @@ The model successfully beats the naive last-price-carry-forward baseline by **+9
 
 ---
 
-## 🗺️ Roadmap
-- [x] Implement real-time Twelve Data ingestion.
-- [x] Configure LightGBM walk-forward training & predictions pipeline.
-- [x] Implement dynamic gap calculation & database locks cleanup.
-- [x] Build Streamlit dashboard with custom CSS theme.
-- [x] Add interactive Plotly Predicted vs. Actual price overlay.
-- [x] Deploy scheduled GitHub Actions cron workflow.
-- [ ] Add support for Multi-Asset tracking (e.g. `XAG/USD`, `EUR/USD`).
-- [ ] Implement automated weekly retraining on Github Actions.
-
----
-
 ## 📄 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
@@ -160,3 +145,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 👤 Author & Contact
 *   **Author**: Talha Shady
 *   **GitHub**: [@talhashady](https://github.com/talhashady)
+*   **Live App**: [stockholmes.streamlit.app](https://stockholmes.streamlit.app/)
