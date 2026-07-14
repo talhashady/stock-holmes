@@ -3,7 +3,7 @@ name: Stock Holmes Data Ingestion & Inference
 on:
   schedule:
     # Runs every 5 minutes from Monday to Friday
-    - cron: '*/5 * * 1-5'
+    - cron: '*/5 * * * 1-5'
   workflow_dispatch: # Allows manual trigger
 
 jobs:
