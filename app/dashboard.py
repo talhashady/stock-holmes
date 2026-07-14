@@ -362,8 +362,8 @@ with tab3:
                 fig_pa.update_layout(
                     paper_bgcolor="#0f172a",
                     plot_bgcolor="#0f172a",
-                    xaxis=dict(gridcolor="#1e293b", tickcolor="#94a3b8", font=dict(color="#94a3b8")),
-                    yaxis=dict(gridcolor="#1e293b", tickcolor="#94a3b8", font=dict(color="#94a3b8"), title="Price (USD)"),
+                    xaxis=dict(gridcolor="#1e293b", tickcolor="#94a3b8", tickfont=dict(color="#94a3b8")),
+                    yaxis=dict(gridcolor="#1e293b", tickcolor="#94a3b8", tickfont=dict(color="#94a3b8"), title=dict(text="Price (USD)", font=dict(color="#94a3b8"))),
                     legend=dict(font=dict(color="#94a3b8"), bgcolor="rgba(15,23,42,0.8)"),
                     margin=dict(l=40, r=40, t=20, b=40)
                 )
