@@ -42,7 +42,7 @@ Stock Holmes is a predictive system designed to capture short-horizon inefficien
 ## ✨ Features
 *   🔮 **Real-Time Classification**: Forecasts Gold price direction 5 minutes into the future along with exact signal confidence weights.
 *   📈 **Interactive Plotly Visualizations**: View resolved predictions in the [live app](https://stockholmes.streamlit.app/), overlaid on the actual price action line chart with colored indicators representing prediction correctness.
-*   🔁 **GitHub Actions Automation**: Scheduled ingestion and inference runs every 5 minutes during market hours, automatically resolving past pending forecasts.
+*   **GitHub Actions & External Cron**: Ingestion and inference pipeline execution is triggered every 5 minutes during market hours by an external cron manager (cron-job.org) invoking the GitHub `repository_dispatch` API. This completely bypasses native GitHub Actions schedule queue delays to guarantee precise execution timing. An hourly native cron schedule is maintained as a fallback.
 *   💾 **Resilient Logging**: Zero-infrastructure persistent prediction logging to a git-committed append-only JSONL file (`data/predictions_log.jsonl`).
 *   🛡️ **API Failover Mitigations**: Transparent failover to Twelve Data if Alpha Vantage rate limits are exceeded, ensuring uptime.
 *   🔒 **Anti-Leakage Safeguards**: Implements a strict 5-candle validation purge boundary in feature engineering to prevent target leakage.
@@ -133,6 +133,13 @@ Evaluating the LightGBM model on historical testing sets:
 | **Stock Holmes LightGBM** | **41.71%** | **+9.09%** |
 
 The model successfully beats the naive last-price-carry-forward baseline by **+9.09%** in directional accuracy.
+
+---
+
+## 💡 Lessons Learned & Architecture Decisions
+
+### ⏰ Avoiding Scheduler Delays with External Cron Triggers
+GitHub Actions free tier uses a shared scheduler queue for `cron` triggers. As a result, executions are not real-time and often get delayed by 15–30 minutes or skipped entirely. To achieve precision execution timing without maintaining a dedicated VM, Stock Holmes uses **cron-job.org** to trigger the pipeline every 5 minutes via GitHub's `repository_dispatch` API. The native schedule trigger in the workflow is maintained solely as an hourly fallback.
 
 ---
 

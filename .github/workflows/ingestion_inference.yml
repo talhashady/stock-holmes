@@ -1,10 +1,12 @@
 name: Stock Holmes Data Ingestion & Inference
 
 on:
-  schedule:
-    # Runs every 5 minutes from Monday to Friday
-    - cron: '*/5 * * * 1-5'
+  repository_dispatch:
+    types: [run-prediction]
   workflow_dispatch: # Allows manual trigger
+  schedule:
+    # Hourly fallback schedule Monday to Friday in case external cron fails
+    - cron: '0 * * * 1-5'
 
 jobs:
   run-pipeline:
