@@ -102,26 +102,6 @@ def predict_latest(flat_threshold_pct: float = 0.0001) -> Optional[Dict[str, Any
     save_prediction(latest_ts, pred_class, confidence, probs_tuple)
     logger.info(f"Saved prediction for {latest_ts}: Direction={pred_class}, Conf={confidence:.2%}")
     
-    # Append to predictions_log.jsonl (Part 1)
-    pred_dt = pd.to_datetime(latest_ts)
-    target_dt = pred_dt + pd.Timedelta(minutes=5)
-    target_ts = target_dt.strftime("%Y-%m-%d %H:%M:%S")
-    dir_str = "UP" if pred_class == 1 else "DOWN" if pred_class == -1 else "FLAT"
-    
-    prediction_record = {
-        "timestamp": latest_ts,
-        "target_timestamp": target_ts,
-        "predicted": dir_str,
-        "confidence": confidence,
-        "spot_price_at_prediction": float(latest_row["close"]),
-        "actual_close": None,
-        "status": "PENDING",
-        "prob_down": float(probs[0]),
-        "prob_flat": float(probs[1]),
-        "prob_up": float(probs[2])
-    }
-    append_prediction(prediction_record)
-    
     # Run backfill of actuals for past predictions in SQLite and JSONL
     backfilled_count = backfill_actuals(db_path=DEFAULT_DB_PATH, flat_threshold_pct=flat_threshold_pct)
     jsonl_resolved = resolve_pending_predictions(db_path=DEFAULT_DB_PATH, flat_threshold_pct=flat_threshold_pct)

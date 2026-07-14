@@ -104,6 +104,7 @@ if st.sidebar.button("🔄 Ingest Latest Data"):
         try:
             inserted = fetch_and_cache(api_key=api_key)
             st.sidebar.success(f"Fetched and cached {inserted} new candles!")
+            st.cache_data.clear()
         except Exception as e:
             st.sidebar.error(f"Ingestion error: {e}")
 
@@ -112,6 +113,7 @@ if st.sidebar.button("🤖 Retrain LightGBM"):
         try:
             metrics = train_pipeline()
             st.sidebar.success(f"Trained! Test Acc: {metrics.get('accuracy', 0.0):.1%}")
+            st.cache_data.clear()
         except Exception as e:
             st.sidebar.error(f"Training error: {e}")
 
@@ -121,6 +123,7 @@ if st.sidebar.button("🎯 Run Inference (Predict)"):
             res = predict_latest()
             if res:
                 st.sidebar.success("Latest prediction saved!")
+                st.cache_data.clear()
             else:
                 st.sidebar.warning("Inference executed but returned no prediction (likely missing history).")
         except Exception as e:
@@ -275,8 +278,8 @@ with tab3:
         # Filter to RESOLVED predictions
         resolved_preds = preds[preds["status"] == "RESOLVED"].copy()
         
-        if len(resolved_preds) < 2:
-            st.info("ℹ️ Not enough resolved predictions yet to plot (need at least 2). Run ingestion and inference to resolve past predictions.")
+        if len(resolved_preds) < 1:
+            st.info("ℹ️ No resolved predictions yet to plot. Run ingestion and inference to resolve past predictions.")
         else:
             # Timeframe filter controls
             timeframe = st.selectbox("Time Range Filter", ["Last 1 Hour", "Last 6 Hours", "Last 24 Hours", "All Available"], index=3)
@@ -378,17 +381,29 @@ with tab4:
             return "📈 UP" if x == 1 else "📉 DOWN" if x == -1 else "➡️ FLAT"
             
         display_preds = preds.copy()
-        display_preds["predicted"] = display_preds["predicted_direction"].map(format_dir)
+        # Use the predicted string from JSONL directly if available, else derive from int
+        if "predicted" not in display_preds.columns or display_preds["predicted"].isna().all():
+            display_preds["predicted"] = display_preds["predicted_direction"].map(format_dir)
+        else:
+            display_preds["predicted"] = display_preds["predicted"].map(
+                lambda x: "📈 UP" if x == "UP" else "📉 DOWN" if x == "DOWN" else "➡️ FLAT" if x == "FLAT" else format_dir(x)
+            )
         display_preds["actual"] = display_preds["actual_direction"].map(lambda x: format_dir(x) if pd.notna(x) else "⏳ PENDING")
         
-        # Calculate correctness
-        display_preds["status"] = np.where(
-            display_preds["actual_direction"].isna(), "⏳ PENDING",
-            np.where(display_preds["predicted_direction"] == display_preds["actual_direction"], "✅ CORRECT", "❌ WRONG")
-        )
+        # Map status from JSONL, then override with correctness for RESOLVED ones
+        if "status" in display_preds.columns:
+            display_preds["result"] = np.where(
+                display_preds["status"] != "RESOLVED", "⏳ PENDING",
+                np.where(display_preds["predicted_direction"] == display_preds["actual_direction"], "✅ CORRECT", "❌ WRONG")
+            )
+        else:
+            display_preds["result"] = np.where(
+                display_preds["actual_direction"].isna(), "⏳ PENDING",
+                np.where(display_preds["predicted_direction"] == display_preds["actual_direction"], "✅ CORRECT", "❌ WRONG")
+            )
         
         # Columns to display
-        display_cols = ["timestamp", "predicted", "confidence", "actual", "actual_close", "status"]
+        display_cols = ["timestamp", "predicted", "confidence", "actual", "actual_close", "result"]
         st.dataframe(display_preds[display_cols].head(50), use_container_width=True)
     else:
         st.info("No predictions logged to database yet.")
