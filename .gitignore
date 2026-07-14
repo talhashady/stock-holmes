@@ -1,0 +1,29 @@
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Python caches and compiles
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Local configuration files
+.env
+.streamlit/secrets.toml
+
+# IDE settings
+.vscode/
+.idea/
+.agents/
+.claude/
+
+# Temporary test databases
+tests/*.db
+tests/predictions_log.jsonl
+*.db-journal
+*.db-shm
+*.db-wal
