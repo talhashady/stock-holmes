@@ -12,8 +12,7 @@ A time-series intelligence system that predicts Gold spot price direction (`UP`/
 ---
 
 ## 📊 Dashboard Preview
-*(Insert a GIF or screenshot showing the live prediction log updates here)*  
-`assets/dashboard_preview.png`
+![Dashboard Preview](assets/dashboard_preview.png)
 
 ---
 
