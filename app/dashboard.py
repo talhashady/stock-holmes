@@ -259,6 +259,14 @@ def load_dashboard_data():
 
 preds, candles, train_metrics = load_dashboard_data()
 
+# ----------------- SIDEBAR DIAGNOSTICS -----------------
+st.sidebar.markdown("---")
+st.sidebar.markdown("**🔍 Environment Diagnostics**")
+st.sidebar.text(f"File Path: {os.path.abspath(__file__)}")
+st.sidebar.text(f"CWD: {os.getcwd()}")
+st.sidebar.text(f"Loaded Predictions: {len(preds)}")
+st.sidebar.text(f"Loaded Candles: {len(candles)}")
+
 # Check if we have data to display
 if candles.empty:
     st.warning("⚠️ Local database is empty. Please use the sidebar to 'Ingest Latest Data' to build the initial database.")
