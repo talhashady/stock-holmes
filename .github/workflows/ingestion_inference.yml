@@ -29,20 +29,22 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Run Ingestion and Prediction
+    - name: Run Multi-Symbol Ingestion and Prediction
       env:
         TWELVE_DATA_API_KEY: ${{ secrets.TWELVE_DATA_API_KEY }}
       run: |
-        # Fetch candles and store them to database
-        python -m src.ingestion.fetcher --backfill 5000
+        # Fetch candles for XAUUSD + cross-asset symbols (EUR/USD, USDJPY)
+        python -m src.ingestion.fetcher --backfill 5000 --multi
         # Run inference (predict) & backfill past actual outcomes
         python -m src.models.predict
 
-    - name: Commit and Push Updated SQLite Database
+    - name: Commit and Push Updated Database and Models
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         git add -f data/stock_holmes.db
-        git add data/predictions_log.jsonl src/models/model.pkl src/models/metrics.json
+        git add data/predictions_log.jsonl
+        git add src/models/model_up.pkl src/models/model_down.pkl
+        git add src/models/metrics.json
         git commit -m "Auto-update database and prediction history [skip ci]" || echo "No changes to commit"
         git push origin main || echo "No changes to push"

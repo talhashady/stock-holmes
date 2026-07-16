@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 
 # Import database and inference functions
 from src.serving.db_utils import get_predictions_history, get_all_candles
-from src.ingestion.fetcher import fetch_and_cache
+from src.ingestion.fetcher import fetch_and_cache, fetch_and_cache_multi
 from src.models.predict import predict_latest
 from src.models.train import train_pipeline
 
@@ -100,10 +100,16 @@ api_key_default = os.getenv("TWELVE_DATA_API_KEY", "")
 api_key = st.sidebar.text_input("Twelve Data API Key", value=api_key_default, type="password")
 
 if st.sidebar.button("🔄 Ingest Latest Data"):
-    with st.spinner("Fetching live candles from Twelve Data..."):
+    with st.spinner("Fetching live candles from Twelve Data (XAUUSD + EURUSD + USDJPY)..."):
         try:
-            inserted = fetch_and_cache(api_key=api_key)
-            st.sidebar.success(f"Fetched and cached {inserted} new candles!")
+            results = fetch_and_cache_multi(api_key=api_key)
+            total_inserted = sum(v for v in results.values() if v > 0)
+            st.sidebar.success(f"Fetched and cached {total_inserted} new candles across {len(results)} symbols!")
+            for sym, count in results.items():
+                if count >= 0:
+                    st.sidebar.text(f"  {sym}: {count} new candles")
+                else:
+                    st.sidebar.warning(f"  {sym}: fetch failed (non-critical)")
             st.cache_data.clear()
         except Exception as e:
             st.sidebar.error(f"Ingestion error: {e}")
@@ -356,11 +362,91 @@ with tab2:
     
     if train_metrics:
         m_col1, m_col2, m_col3 = st.columns(3)
-        m_col1.metric("LightGBM Accuracy", f"{train_metrics['accuracy']:.1%}", 
-                      delta=f"{train_metrics['accuracy'] - train_metrics['naive_flat_accuracy']:.1%} vs Flat Baseline")
-        m_col2.metric("Naive Directional Sign Accuracy", f"{train_metrics['naive_sign_accuracy']:.1%}")
-        m_col3.metric("High-Confidence Accuracy (>45%)", f"{train_metrics['high_confidence_accuracy']:.1%}",
-                      delta=f"{train_metrics['high_confidence_count']} samples")
+        m_col1.metric("Combined Accuracy", f"{train_metrics.get('accuracy', 0.0):.1%}", 
+                      delta=f"{train_metrics.get('accuracy', 0.0) - train_metrics.get('naive_flat_accuracy', 0.0):.1%} vs Flat Baseline")
+        m_col2.metric("Naive Directional Sign Accuracy", f"{train_metrics.get('naive_sign_accuracy', 0.0):.1%}")
+        m_col3.metric("High-Confidence Accuracy (>55%)", f"{train_metrics.get('high_confidence_accuracy', 0.0):.1%}",
+                      delta=f"{train_metrics.get('high_confidence_count', 0)} samples")
+        
+        # --- Binary Model Per-Detector Metrics ---
+        st.markdown("#### 🎯 Binary Detector Metrics (UP / DOWN)")
+        det_col1, det_col2 = st.columns(2)
+        
+        with det_col1:
+            st.markdown("""
+            <div class="metric-card">
+                <h4>📈 UP-Detector</h4>
+                <p>Precision: <b>{:.1%}</b></p>
+                <p>Recall: <b>{:.1%}</b></p>
+                <p>F1 Score: <b>{:.1%}</b></p>
+                <p style='color: #64748b;'>Threshold: {:.2f}</p>
+            </div>
+            """.format(
+                train_metrics.get("up_precision", 0.0),
+                train_metrics.get("up_recall", 0.0),
+                train_metrics.get("up_f1", 0.0),
+                train_metrics.get("up_threshold", 0.5),
+            ), unsafe_allow_html=True)
+        
+        with det_col2:
+            st.markdown("""
+            <div class="metric-card">
+                <h4>📉 DOWN-Detector</h4>
+                <p>Precision: <b>{:.1%}</b></p>
+                <p>Recall: <b>{:.1%}</b></p>
+                <p>F1 Score: <b>{:.1%}</b></p>
+                <p style='color: #64748b;'>Threshold: {:.2f}</p>
+            </div>
+            """.format(
+                train_metrics.get("down_precision", 0.0),
+                train_metrics.get("down_recall", 0.0),
+                train_metrics.get("down_f1", 0.0),
+                train_metrics.get("down_threshold", 0.5),
+            ), unsafe_allow_html=True)
+        
+        # --- Class Distribution ---
+        test_dist = train_metrics.get("test_class_distribution", {})
+        if test_dist:
+            st.markdown("#### 📊 Combined Test Set Class Distribution")
+            dist_labels = {"1": "UP", "0": "FLAT", "-1": "DOWN"}
+            dist_data = {dist_labels.get(k, k): v for k, v in test_dist.items()}
+            
+            fig_dist, ax_dist = plt.subplots(figsize=(6, 3))
+            colors_dist = {"UP": "#10b981", "FLAT": "#94a3b8", "DOWN": "#ef4444"}
+            bars = ax_dist.bar(
+                dist_data.keys(), 
+                dist_data.values(),
+                color=[colors_dist.get(k, "#3b82f6") for k in dist_data.keys()]
+            )
+            ax_dist.set_ylabel("Proportion", color="#94a3b8")
+            ax_dist.set_facecolor("#0f172a")
+            fig_dist.patch.set_facecolor("#0f172a")
+            ax_dist.tick_params(colors='#94a3b8')
+            for spine in ax_dist.spines.values():
+                spine.set_color('#475569')
+            for bar, val in zip(bars, dist_data.values()):
+                ax_dist.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.01,
+                           f'{val:.1%}', ha='center', va='bottom', color='#94a3b8', fontsize=10)
+            st.pyplot(fig_dist)
+        
+        # --- Feature Importance ---
+        for model_name, display_name in [("up", "📈 UP-Detector"), ("down", "📉 DOWN-Detector")]:
+            feat_imp = train_metrics.get(f"{model_name}_feature_importance", {})
+            if feat_imp:
+                st.markdown(f"#### {display_name} — Top 10 Feature Importance")
+                sorted_feats = sorted(feat_imp.items(), key=lambda x: x[1], reverse=True)[:10]
+                feat_names = [f[0] for f in sorted_feats]
+                feat_vals = [f[1] for f in sorted_feats]
+                
+                fig_fi, ax_fi = plt.subplots(figsize=(8, 3.5))
+                ax_fi.barh(feat_names[::-1], feat_vals[::-1], color="#3b82f6")
+                ax_fi.set_xlabel("Gain", color="#94a3b8")
+                ax_fi.set_facecolor("#0f172a")
+                fig_fi.patch.set_facecolor("#0f172a")
+                ax_fi.tick_params(colors='#94a3b8')
+                for spine in ax_fi.spines.values():
+                    spine.set_color('#475569')
+                st.pyplot(fig_fi)
         
         # Cumulative P&L chart
         st.markdown("#### Cumulative Returns (Walk-Forward Test Window)")
@@ -373,7 +459,7 @@ with tab2:
             })
             
             fig_bt, ax_bt = plt.subplots(figsize=(10, 4.5))
-            ax_bt.plot(bt_df["Timestamp"], bt_df["Model Strategy"], label="Stock Holmes Strategy", color="#10b981", linewidth=2)
+            ax_bt.plot(bt_df["Timestamp"], bt_df["Model Strategy"], label="Stock Holmes v2 Strategy", color="#10b981", linewidth=2)
             ax_bt.plot(bt_df["Timestamp"], bt_df["Naive Sign Baseline"], label="Naive Sign Carry-Forward", color="#ef4444", linestyle="--")
             ax_bt.set_facecolor("#0f172a")
             fig_bt.patch.set_facecolor("#0f172a")

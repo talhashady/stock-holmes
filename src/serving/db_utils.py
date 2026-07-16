@@ -23,11 +23,20 @@ def get_connection(db_path: str = DEFAULT_DB_PATH):
     finally:
         conn.close()
 
+# Valid cross-asset table names for parameterized queries
+VALID_CANDLE_TABLES = {"candles", "candles_dxy", "candles_eurusd", "candles_usdjpy"}
+
+def _validate_table_name(table_name: str) -> str:
+    """Validates table name against whitelist to prevent SQL injection."""
+    if table_name not in VALID_CANDLE_TABLES:
+        raise ValueError(f"Invalid table name '{table_name}'. Must be one of: {VALID_CANDLE_TABLES}")
+    return table_name
+
 def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
     """Initializes the database schemas for candles and predictions."""
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
-        # Candles table
+        # Candles table (XAUUSD — primary)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS candles (
                 timestamp TEXT PRIMARY KEY,
@@ -52,11 +61,38 @@ def init_db(db_path: str = DEFAULT_DB_PATH) -> None:
             );
         """)
         conn.commit()
+    # Also initialize cross-asset tables
+    init_cross_asset_tables(db_path)
 
-def save_candles(df: pd.DataFrame, db_path: str = DEFAULT_DB_PATH) -> int:
-    """Saves a pandas DataFrame of candles to SQLite. Ignores duplicates."""
+def init_cross_asset_tables(db_path: str = DEFAULT_DB_PATH) -> None:
+    """Creates candle tables for cross-asset correlation symbols (EUR/USD, USDJPY)."""
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        for table_name in ["candles_eurusd", "candles_usdjpy"]:
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS {table_name} (
+                    timestamp TEXT PRIMARY KEY,
+                    open REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    close REAL NOT NULL,
+                    volume REAL NOT NULL
+                );
+            """)
+        conn.commit()
+
+def save_candles(df: pd.DataFrame, db_path: str = DEFAULT_DB_PATH, table_name: str = "candles") -> int:
+    """Saves a pandas DataFrame of candles to SQLite. Ignores duplicates.
+    
+    Args:
+        df: DataFrame with OHLCV columns.
+        db_path: Path to SQLite database.
+        table_name: Target table — 'candles' (XAUUSD), 'candles_dxy', or 'candles_usdjpy'.
+    """
     if df.empty:
         return 0
+    
+    table_name = _validate_table_name(table_name)
     
     required_cols = ["timestamp", "open", "high", "low", "close", "volume"]
     for col in required_cols:
@@ -74,8 +110,8 @@ def save_candles(df: pd.DataFrame, db_path: str = DEFAULT_DB_PATH) -> int:
         cursor = conn.cursor()
         for rec in records:
             try:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO candles (timestamp, open, high, low, close, volume)
+                cursor.execute(f"""
+                    INSERT OR IGNORE INTO {table_name} (timestamp, open, high, low, close, volume)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (rec["timestamp"], rec["open"], rec["high"], rec["low"], rec["close"], rec["volume"]))
                 if cursor.rowcount > 0:
@@ -85,18 +121,38 @@ def save_candles(df: pd.DataFrame, db_path: str = DEFAULT_DB_PATH) -> int:
         conn.commit()
     return inserted
 
-def get_latest_candle_time(db_path: str = DEFAULT_DB_PATH) -> Optional[str]:
-    """Returns the ISO timestamp of the latest candle stored in the database."""
+def get_latest_candle_time(db_path: str = DEFAULT_DB_PATH, table_name: str = "candles") -> Optional[str]:
+    """Returns the ISO timestamp of the latest candle stored in the database.
+    
+    Args:
+        db_path: Path to SQLite database.
+        table_name: Table to query — 'candles', 'candles_dxy', or 'candles_usdjpy'.
+    """
+    table_name = _validate_table_name(table_name)
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT MAX(timestamp) FROM candles")
-        res = cursor.fetchone()
-        return res[0] if res else None
+        try:
+            cursor.execute(f"SELECT MAX(timestamp) FROM {table_name}")
+            res = cursor.fetchone()
+            return res[0] if res else None
+        except sqlite3.OperationalError:
+            # Table may not exist yet for cross-asset symbols
+            return None
 
-def get_all_candles(db_path: str = DEFAULT_DB_PATH) -> pd.DataFrame:
-    """Fetches all candles sorted chronologically."""
+def get_all_candles(db_path: str = DEFAULT_DB_PATH, table_name: str = "candles") -> pd.DataFrame:
+    """Fetches all candles sorted chronologically.
+    
+    Args:
+        db_path: Path to SQLite database.
+        table_name: Table to query — 'candles', 'candles_dxy', or 'candles_usdjpy'.
+    """
+    table_name = _validate_table_name(table_name)
     with get_connection(db_path) as conn:
-        df = pd.read_sql_query("SELECT * FROM candles ORDER BY timestamp ASC", conn)
+        try:
+            df = pd.read_sql_query(f"SELECT * FROM {table_name} ORDER BY timestamp ASC", conn)
+        except Exception:
+            # Table may not exist yet — return empty DataFrame
+            df = pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
     return df
 
 def save_prediction(timestamp: str, predicted_direction: int, confidence: float, 

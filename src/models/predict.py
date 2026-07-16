@@ -15,14 +15,39 @@ from src.serving.db_utils import (
     resolve_pending_predictions
 )
 from src.features.builder import build_features_df
-from src.models.train import train_pipeline
+from src.models.train import (
+    train_pipeline, combine_binary_predictions,
+    MODEL_UP_PATH, MODEL_DOWN_PATH, MODEL_LEGACY_PATH,
+    METRICS_SAVE_PATH
+)
 
 logger = logging.getLogger("models.predict")
 
-MODEL_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "model.pkl"
-)
+# Configurable thresholds — can be tuned independently per model
+DEFAULT_UP_THRESHOLD = 0.50
+DEFAULT_DOWN_THRESHOLD = 0.50
+
+
+def load_tuned_thresholds() -> tuple:
+    """
+    Loads auto-tuned decision thresholds from metrics.json.
+    Falls back to defaults if the file doesn't exist or is malformed.
+    
+    Returns:
+        Tuple of (up_threshold, down_threshold).
+    """
+    if os.path.exists(METRICS_SAVE_PATH):
+        try:
+            with open(METRICS_SAVE_PATH, "r") as f:
+                metrics = json.load(f)
+            up_thresh = metrics.get("up_threshold", DEFAULT_UP_THRESHOLD)
+            down_thresh = metrics.get("down_threshold", DEFAULT_DOWN_THRESHOLD)
+            logger.info(f"Loaded tuned thresholds from metrics.json: UP={up_thresh:.3f}, DOWN={down_thresh:.3f}")
+            return float(up_thresh), float(down_thresh)
+        except Exception as e:
+            logger.warning(f"Could not load thresholds from metrics.json: {e}. Using defaults.")
+    return DEFAULT_UP_THRESHOLD, DEFAULT_DOWN_THRESHOLD
+
 
 def get_log_path() -> str:
     return os.path.join(os.path.dirname(DEFAULT_DB_PATH), "predictions_log.jsonl")
@@ -45,13 +70,25 @@ def append_prediction(prediction: dict, path: Optional[str] = None) -> None:
         f.write(json.dumps(prediction) + "\n")
 
 
-def get_trained_model():
-    """Loads the model, training it if it does not exist."""
-    if not os.path.exists(MODEL_PATH):
-        logger.warning("Trained model file not found. Running training pipeline...")
+def get_trained_models() -> tuple:
+    """
+    Loads both binary classifiers (UP-detector and DOWN-detector).
+    If models don't exist, triggers the training pipeline first.
+    
+    Returns:
+        Tuple of (model_up, model_down).
+    """
+    if not os.path.exists(MODEL_UP_PATH) or not os.path.exists(MODEL_DOWN_PATH):
+        logger.warning("Trained binary model files not found. Running training pipeline...")
         train_pipeline()
-    with open(MODEL_PATH, "rb") as f:
-        return pickle.load(f)
+    
+    with open(MODEL_UP_PATH, "rb") as f:
+        model_up = pickle.load(f)
+    with open(MODEL_DOWN_PATH, "rb") as f:
+        model_down = pickle.load(f)
+    
+    return model_up, model_down
+
 
 def check_live_regression(log_path: str, window_size: int = 30, threshold: float = 0.90) -> None:
     """Reads the latest predictions from predictions_log.jsonl and checks for model collapse."""
@@ -113,21 +150,63 @@ def check_live_regression(log_path: str, window_size: int = 30, threshold: float
             except Exception:
                 pass
 
-def predict_latest(flat_threshold_pct: float = 0.0001) -> Optional[Dict[str, Any]]:
+def predict_latest(
+    flat_threshold_pct: float = 0.0001,
+    up_threshold: float = None,
+    down_threshold: float = None
+) -> Optional[Dict[str, Any]]:
     """
-    Builds features on the latest candles, loads the trained model,
-    makes a 5-minute ahead direction prediction, saves it to SQLite,
-    and runs the actuals backfill process.
+    Builds features on the latest candles, loads both binary classifiers,
+    makes a 5-minute ahead direction prediction using the combination rule,
+    saves it to SQLite, and runs the actuals backfill process.
+    
+    Cross-asset data (DXY, USDJPY) is fetched from SQLite. If unavailable,
+    correlation features degrade gracefully to NaN and are excluded from
+    the feature matrix — the model runs on remaining features only.
+    
+    Thresholds default to auto-tuned values from metrics.json if available.
+    
+    Args:
+        flat_threshold_pct: Threshold for UP/DOWN vs FLAT classification.
+        up_threshold: Decision threshold for UP-detector (None = load from metrics).
+        down_threshold: Decision threshold for DOWN-detector (None = load from metrics).
     """
+    # Load tuned thresholds if not explicitly provided
+    if up_threshold is None or down_threshold is None:
+        tuned_up, tuned_down = load_tuned_thresholds()
+        up_threshold = up_threshold if up_threshold is not None else tuned_up
+        down_threshold = down_threshold if down_threshold is not None else tuned_down
     logger.info("Fetching latest cached candles from database...")
     df_raw = get_all_candles()
     
     if len(df_raw) < 100:
         logger.warning(f"Insufficient candle history ({len(df_raw)} candles) to build features. Need at least 100.")
         return None
+    
+    # Fetch cross-asset data — graceful fallback if unavailable
+    df_eurusd = pd.DataFrame()
+    df_usdjpy = pd.DataFrame()
+    
+    try:
+        df_eurusd = get_all_candles(table_name="candles_eurusd")
+        if not df_eurusd.empty:
+            logger.info(f"Loaded {len(df_eurusd)} EURUSD candles for correlation features.")
+    except Exception as e:
+        logger.warning(f"Failed to load EURUSD candles: {e}. Correlation features will be NaN.")
+    
+    try:
+        df_usdjpy = get_all_candles(table_name="candles_usdjpy")
+        if not df_usdjpy.empty:
+            logger.info(f"Loaded {len(df_usdjpy)} USDJPY candles for correlation features.")
+    except Exception as e:
+        logger.warning(f"Failed to load USDJPY candles: {e}. Correlation features will be NaN.")
         
     # Build features (live mode)
-    df_features, feature_cols = build_features_df(df_raw, is_training=False, flat_threshold_pct=flat_threshold_pct)
+    df_features, feature_cols = build_features_df(
+        df_raw, is_training=False, flat_threshold_pct=flat_threshold_pct,
+        df_eurusd=df_eurusd if not df_eurusd.empty else None,
+        df_usdjpy=df_usdjpy if not df_usdjpy.empty else None
+    )
     
     if df_features.empty:
         logger.warning("Feature matrix is empty after preprocessing.")
@@ -139,36 +218,63 @@ def predict_latest(flat_threshold_pct: float = 0.0001) -> Optional[Dict[str, Any
     
     logger.info(f"Generating prediction for latest candle at timestamp: {latest_ts}")
     
-    # Load model
+    # Load both binary models
     try:
-        model = get_trained_model()
+        model_up, model_down = get_trained_models()
     except Exception as e:
-        logger.error(f"Error loading/training model: {e}")
+        logger.error(f"Error loading/training models: {e}")
         return None
         
-    # Extract feature vector
-    X_inference = latest_row[feature_cols].values.reshape(1, -1)
+    # Align features with what the model expects from metrics.json to prevent LightGBM shape mismatch
+    expected_features = None
+    if os.path.exists(METRICS_SAVE_PATH):
+        try:
+            with open(METRICS_SAVE_PATH, "r") as f:
+                metrics_data = json.load(f)
+            expected_features = metrics_data.get("feature_columns")
+        except Exception as e:
+            logger.warning(f"Failed to load expected feature list from metrics: {e}")
+            
+    if not expected_features:
+        logger.warning("Metrics expected features list not found. Falling back to feature builder list.")
+        expected_features = feature_cols
+    else:
+        logger.info(f"Aligning inference vector to expected feature list ({len(expected_features)} columns).")
+        
+    # Reindex series to expected features: inserts NaN for missing features, drops extra features
+    latest_series = latest_row.reindex(expected_features)
+    X_inference = latest_series.values.reshape(1, -1)
     
-    # Model returns shape (1, 3) representing probabilities for [DOWN, FLAT, UP]
-    probs = model.predict(X_inference)[0]
+    # Run both models independently
+    prob_up = model_up.predict(X_inference)[0]    # P(UP)
+    prob_down = model_down.predict(X_inference)[0]  # P(DOWN)
     
-    # Predicted class: 0 (DOWN), 1 (FLAT), 2 (UP)
-    pred_shifted = int(np.argmax(probs))
-    pred_class = pred_shifted - 1 # Map back to [-1, 0, 1]
+    # Apply combination rule
+    pred_array, conf_array = combine_binary_predictions(
+        np.array([prob_up]), np.array([prob_down]),
+        up_threshold=up_threshold, down_threshold=down_threshold
+    )
     
-    confidence = float(probs[pred_shifted])
+    pred_class = int(pred_array[0])
+    confidence = float(conf_array[0])
+    
+    # Derive probability triplet for JSONL schema compatibility.
+    # prob_up and prob_down come directly from the binary models.
+    # prob_flat is synthetic: represents the "no signal" certainty.
+    prob_flat_synthetic = float(max(0.0, 1.0 - prob_up - prob_down))
     
     # Save the prediction to the database
-    probs_tuple = (float(probs[0]), float(probs[1]), float(probs[2]))
+    probs_tuple = (float(prob_down), float(prob_flat_synthetic), float(prob_up))
     save_prediction(latest_ts, pred_class, confidence, probs_tuple)
     logger.info(f"Saved prediction for {latest_ts}: Direction={pred_class}, Conf={confidence:.2%}")
+    logger.info(f"  P(UP)={prob_up:.3f}, P(DOWN)={prob_down:.3f}, P(FLAT)~={prob_flat_synthetic:.3f}")
     
     # Run backfill of actuals for past predictions in SQLite and JSONL
     backfilled_count = backfill_actuals(db_path=DEFAULT_DB_PATH, flat_threshold_pct=flat_threshold_pct)
     jsonl_resolved = resolve_pending_predictions(db_path=DEFAULT_DB_PATH, flat_threshold_pct=flat_threshold_pct)
     
     if backfilled_count > 0 or jsonl_resolved > 0:
-        logger.info(f"Backfilled actual target performance for {backfilled_count} past SQL predictions and {jsonl_resolved} JSONL predictions (aligned to DB path).")
+        logger.info(f"Backfilled actual target performance for {backfilled_count} past SQL predictions and {jsonl_resolved} JSONL predictions.")
         
     # Run live regression distribution check
     try:
@@ -180,9 +286,9 @@ def predict_latest(flat_threshold_pct: float = 0.0001) -> Optional[Dict[str, Any
         "timestamp": latest_ts,
         "prediction": pred_class,
         "confidence": confidence,
-        "prob_down": probs[0],
-        "prob_flat": probs[1],
-        "prob_up": probs[2],
+        "prob_down": float(prob_down),
+        "prob_flat": float(prob_flat_synthetic),
+        "prob_up": float(prob_up),
         "close_price": float(latest_row["close"])
     }
 

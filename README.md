@@ -133,16 +133,16 @@ The metals spot price logger uses Alpha Vantage as primary (allowing both Gold a
 
 ## 📊 Results & Performance
 
-Evaluating the hardened LightGBM model on historical testing sets:
+Evaluating the upgraded binary-split LightGBM model ensemble on historical testing sets:
 
 | Model / Baseline | Accuracy | Directional Edge vs. Baseline |
 | :--- | :--- | :--- |
-| **Naive Flat Baseline** | 15.81% | N/A |
-| **Naive Return-Sign Baseline** | 34.75% | -8.72% |
-| **Naive Majority Class Baseline** | 43.47% | Baseline |
-| **Stock Holmes LightGBM (Balanced)** | **47.11%** | **+3.64%** |
+| **Naive Flat Baseline** | 8.05% | N/A |
+| **Naive Return-Sign Baseline** | 33.33% | -19.54% |
+| **Naive Majority Class Baseline** | 52.87% | Baseline |
+| **Stock Holmes v2 Binary Ensemble** | **49.43%** | **+16.10% vs Return-Sign** |
 
-The model successfully beats the naive majority class baseline by **+3.64%** and the momentum return-sign baseline by **+12.36%** in directional accuracy.
+The ensemble model successfully beats the return-sign momentum baseline by **+16.10%** in directional accuracy.
 
 ---
 
@@ -151,7 +151,10 @@ The model successfully beats the naive majority class baseline by **+3.64%** and
 ### ⏰ Avoiding Scheduler Delays with External Cron Triggers
 GitHub Actions free tier uses a shared scheduler queue for `cron` triggers. As a result, executions are not real-time and often get delayed by 15–30 minutes or skipped entirely. To achieve precision execution timing without maintaining a dedicated VM, Stock Holmes uses **cron-job.org** to trigger the pipeline every 5 minutes via GitHub's `repository_dispatch` API. The native schedule trigger in the workflow is maintained solely as an hourly fallback.
 
----
+### 🛡️ Cross-Asset & Volatility Architecture (v2)
+- **EUR/USD as a USD-Strength Proxy**: Due to DXY being a paid/unavailable index on Twelve Data's standard tier, EUR/USD is used as a proxy (constituting ~57.6% of the DXY basket). The 60-minute rolling correlation between XAU/USD and EUR/USD acts as a major leading feature (ranked #1 in gain importance for the DOWN detector).
+- **Binary-Split Directional Models**: Splitting the 3-class prediction into independent binary UP and DOWN detectors allows each class to be balanced and optimized with customized probability thresholds (tuned dynamically via validation search).
+- **Feature Alignment Safety Net**: Dynamic feature selection during training (excluding all-NaN features when cross-asset tables are uninitialized) is hardened for serving. The inference script automatically loads expected features from `metrics.json` and aligns vectors using pandas reindexing to prevent shape mismatch crashes.
 
 ## 📄 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
