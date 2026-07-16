@@ -18,66 +18,175 @@ from src.models.train import train_pipeline
 
 # ----------------- PAGE CONFIG & DESIGN -----------------
 st.set_page_config(
-    page_title="Stock Holmes | XAUUSD Predictor",
+    page_title="Stock Holmes | Case Board",
     page_icon="🕵️‍♂️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Premium Dark Mode Theme Injection
+# Case File Terminal Theme Injection
 st.markdown("""
 <style>
-    /* Dark glassmorphic styling */
-    .reportview-container {
-        background: #0f172a;
+    @import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+    :root {
+      --ink-black: #0E1015;
+      --panel-surface: #1C2128;
+      --brass-accent: #C9A227;
+      --evidence-red: #8B2635;
+      --muted-teal: #3A7D6E;
+      --aged-paper: #E8DCC0;
     }
-    div.stButton > button {
-        background-color: #3b82f6;
-        color: white;
-        border-radius: 8px;
-        border: none;
-        padding: 8px 16px;
-        font-weight: bold;
-        transition: all 0.3s ease;
+
+    /* Page background and general typography */
+    .stApp {
+      background-color: var(--ink-black) !important;
+      color: var(--aged-paper) !important;
+      font-family: 'IBM Plex Sans', sans-serif !important;
     }
-    div.stButton > button:hover {
-        background-color: #2563eb;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+
+    /* Sidebar overrides */
+    [data-testid="stSidebar"] {
+      background-color: #0b0c10 !important;
+      border-right: 1px solid rgba(201, 162, 39, 0.15) !important;
     }
-    .metric-card {
-        background: rgba(30, 41, 59, 0.7);
-        border: 1px solid rgba(255, 255, 255, 0.05);
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
-        backdrop-filter: blur(4px);
-        transition: transform 0.2s;
+
+    /* Header typography */
+    h1, h2, h3, h4, h5, h6, .case-header {
+      font-family: 'Special Elite', monospace !important;
+      color: var(--brass-accent) !important;
+      font-weight: normal !important;
     }
-    .metric-card:hover {
-        transform: scale(1.02);
-        border-color: rgba(59, 130, 246, 0.3);
+
+    /* Evidence Card styles */
+    .evidence-card {
+      background: linear-gradient(135deg, #1d2128 0%, #161a20 100%);
+      border: 1px solid rgba(201, 162, 39, 0.2);
+      border-radius: 4px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+      position: relative;
+      transition: transform 0.3s cubic-bezier(0.165, 0.84, 0.44, 1), box-shadow 0.3s ease;
+      margin-bottom: 20px;
     }
-    .glow-up {
-        color: #10b981;
-        text-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
-        font-weight: bold;
+    .evidence-card::before {
+      content: "📌";
+      position: absolute;
+      top: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 22px;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));
+      z-index: 10;
     }
-    .glow-down {
-        color: #ef4444;
-        text-shadow: 0 0 10px rgba(239, 68, 68, 0.3);
-        font-weight: bold;
+
+    @media (prefers-reduced-motion: no-preference) {
+      .evidence-card:hover {
+        transform: translateY(-4px) scale(1.01);
+        box-shadow: 0 15px 35px rgba(201, 162, 39, 0.25);
+        border-color: var(--brass-accent);
+      }
     }
-    .glow-flat {
-        color: #94a3b8;
-        text-shadow: 0 0 10px rgba(148, 163, 184, 0.3);
-        font-weight: bold;
+
+    .evidence-card-1 {
+      transform: rotate(-1.2deg);
+    }
+    .evidence-card-2 {
+      transform: rotate(1deg);
+    }
+    .evidence-card-3 {
+      transform: rotate(-0.5deg);
+    }
+
+    /* Polygraph Gauge pointer animation */
+    @media (prefers-reduced-motion: no-preference) {
+      .gauge-needle {
+        transition: transform 1.2s cubic-bezier(0.25, 0.8, 0.25, 1);
+      }
+    }
+
+    /* Rubber Stamp styles */
+    .stamp-confirmed {
+      color: var(--muted-teal);
+      border: 2px dashed var(--muted-teal);
+      padding: 2px 8px;
+      font-family: 'Special Elite', monospace;
+      font-weight: bold;
+      text-transform: uppercase;
+      display: inline-block;
+      transform: rotate(-3deg);
+      border-radius: 4px;
+      font-size: 11px;
+      letter-spacing: 1px;
+      background-color: rgba(58, 125, 110, 0.05);
+    }
+    .stamp-wrong {
+      color: var(--evidence-red);
+      border: 2px dashed var(--evidence-red);
+      padding: 2px 8px;
+      font-family: 'Special Elite', monospace;
+      font-weight: bold;
+      text-transform: uppercase;
+      display: inline-block;
+      transform: rotate(3deg);
+      border-radius: 4px;
+      font-size: 11px;
+      letter-spacing: 1px;
+      background-color: rgba(139, 38, 53, 0.05);
+    }
+    .stamp-pending {
+      color: var(--brass-accent);
+      border: 2px dashed var(--brass-accent);
+      padding: 2px 8px;
+      font-family: 'Special Elite', monospace;
+      font-weight: bold;
+      text-transform: uppercase;
+      display: inline-block;
+      border-radius: 4px;
+      font-size: 11px;
+      letter-spacing: 1px;
+      background-color: rgba(201, 162, 39, 0.05);
+    }
+
+    /* Manila Folder Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+      gap: 8px !important;
+      background-color: transparent !important;
+      border-bottom: 2px solid var(--panel-surface) !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+      font-family: 'Special Elite', monospace !important;
+      background-color: var(--panel-surface) !important;
+      color: #718096 !important;
+      border-top-left-radius: 6px !important;
+      border-top-right-radius: 6px !important;
+      border-bottom-left-radius: 0px !important;
+      border-bottom-right-radius: 0px !important;
+      padding: 10px 22px !important;
+      border: 1px solid rgba(255,255,255,0.03) !important;
+      border-bottom: none !important;
+      font-size: 13px !important;
+      letter-spacing: 1px !important;
+      transition: all 0.2s ease !important;
+    }
+    .stTabs [aria-selected="true"] {
+      background-color: var(--aged-paper) !important;
+      color: var(--ink-black) !important;
+      border-color: var(--aged-paper) !important;
+      font-weight: bold !important;
+    }
+
+    /* General metric overrides */
+    [data-testid="stMetricValue"] {
+      color: var(--brass-accent) !important;
+      font-family: 'IBM Plex Mono', monospace !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
 # Title Header
-st.title("🕵️‍♂️ Stock Holmes: XAUUSD 5m-Ahead Predictor")
+st.markdown('<div class="case-header" style="color: var(--brass-accent); font-size: 14px; letter-spacing: 2px; margin-top: 10px;">CASE #XAUUSD-001 · STATUS: ACTIVE</div>', unsafe_allow_html=True)
+st.title("🕵️‍♂️ Stock Holmes: Case Board")
 st.markdown("A Time-Series Intelligence System for Short-Horizon Gold Spot Price Direction.")
 
 # Sidebar setup
@@ -298,28 +407,26 @@ preds, candles, train_metrics = load_dashboard_data()
 
 # ----------------- SIDEBAR DIAGNOSTICS -----------------
 st.sidebar.markdown("---")
-st.sidebar.markdown("**🔍 Environment Diagnostics**")
-st.sidebar.text(f"File Path: {os.path.abspath(__file__)}")
-st.sidebar.text(f"CWD: {os.getcwd()}")
-st.sidebar.text(f"Loaded Predictions: {len(preds)}")
-st.sidebar.text(f"Loaded Candles: {len(candles)}")
+st.sidebar.markdown("**🔍 Case Board Statistics**")
+st.sidebar.text(f"Total Leads Logged: {len(preds)}")
+st.sidebar.text(f"Total Evidence Candles: {len(candles)}")
 
 # Check if we have data to display
 if candles.empty:
     st.warning("⚠️ Local database is empty. Please use the sidebar to 'Ingest Latest Data' to build the initial database.")
     st.stop()
 
-# ----------------- SECTION 1: LIVE PREDICTION TERMINAL -----------------
-st.markdown("### 🖥️ Live Prediction Terminal")
+# ----------------- SECTION 1: LIVE CASE FILE TERMINAL -----------------
+st.markdown("### 🖥️ Live Case File Terminal")
 col1, col2, col3 = st.columns(3)
 
 # Latest candle
 latest_candle = candles.iloc[-1]
 col1.markdown("""
-<div class="metric-card">
-    <h4>💵 Current Spot Price</h4>
-    <h2 style='font-size: 36px; margin: 5px 0;'>${:,.2f}</h2>
-    <p style='color: #64748b; font-size: 13px;'>Last Candle: {} UTC</p>
+<div class="evidence-card evidence-card-1">
+    <h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent);">💵 CURRENT GOLD SPOT</h4>
+    <h2 style="font-family: 'IBM Plex Mono', monospace; font-size: 32px; margin: 10px 0; color: var(--aged-paper);">${:,.2f}</h2>
+    <p style="color: #64748b; font-size: 12px; margin: 0;">Case Log: {} UTC</p>
 </div>
 """.format(latest_candle["close"], latest_candle["timestamp"]), unsafe_allow_html=True)
 
@@ -332,46 +439,61 @@ if not preds.empty:
     meta_conf_val = latest_pred.get("meta_confidence")
     meta_info = ""
     if pd.notna(meta_conf_val) and meta_conf_val is not None:
-        meta_info = f" | Meta Trust: {float(meta_conf_val):.1%}"
+        meta_info = f" | Trust: {float(meta_conf_val):.1%}"
     
     if pred_dir == 1:
-        glow_class = "glow-up"
-        dir_text = "📈 UP"
+        color = "var(--muted-teal)"
+        dir_text = "📈 UP LEAD"
     elif pred_dir == -1:
-        glow_class = "glow-down"
-        dir_text = "📉 DOWN"
+        color = "var(--evidence-red)"
+        dir_text = "📉 DOWN LEAD"
     else:
-        glow_class = "glow-flat"
-        dir_text = "➡️ FLAT"
+        color = "var(--brass-accent)"
+        dir_text = "➡️ FLAT LEAD"
         
     col2.markdown("""
-    <div class="metric-card">
-        <h4>🕵️‍♂️ Predicted Direction (5m ahead)</h4>
-        <h2 class="{}" style='font-size: 36px; margin: 5px 0;'>{}</h2>
-        <p style='color: #64748b; font-size: 13px;'>Model Confidence: {:.1%}{}</p>
+    <div class="evidence-card evidence-card-2">
+        <h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent);">🕵️‍♂️ FORECAST LEAD (5M)</h4>
+        <h2 style="font-family: 'Special Elite', monospace; font-size: 32px; margin: 10px 0; color: {};">{}</h2>
+        <p style="color: #64748b; font-size: 12px; margin: 0;">Certainty: {:.1%}{}</p>
     </div>
-    """.format(glow_class, dir_text, conf, meta_info), unsafe_allow_html=True)
+    """.format(color, dir_text, conf, meta_info), unsafe_allow_html=True)
     
-    # Probs distribution
+    # SVG Certainty Polygraph Gauge
+    angle = (conf - 0.5) * 140.0
     col3.markdown("""
-    <div class="metric-card">
-        <h4>📊 Signal Confidence Weights</h4>
-        <p style='margin: 4px 0;'><b>DOWN</b>: {:.1%}</p>
-        <p style='margin: 4px 0;'><b>FLAT</b>: {:.1%}</p>
-        <p style='margin: 4px 0;'><b>UP</b>: {:.1%}</p>
+    <div class="evidence-card evidence-card-3" style="height: 100%;">
+        <h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; text-align: center; color: var(--brass-accent);">📊 CERTAINTY GAUGE</h4>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-top: 10px;">
+            <svg width="150" height="55" viewBox="0 0 160 80">
+                <!-- Gauge Arc -->
+                <path d="M 20 70 A 60 60 0 0 1 140 70" fill="none" stroke="#2a303c" stroke-width="8" stroke-linecap="round"/>
+                <path d="M 20 70 A 60 60 0 0 1 140 70" fill="none" stroke="var(--brass-accent)" stroke-width="2" stroke-dasharray="2 4"/>
+                
+                <!-- Center Hub -->
+                <circle cx="80" cy="70" r="6" fill="var(--brass-accent)"/>
+                
+                <!-- Sweeping Needle -->
+                <line class="gauge-needle" x1="80" y1="70" x2="80" y2="20" stroke="var(--evidence-red)" stroke-width="4" stroke-linecap="round"
+                      transform="rotate({}, 80, 70)"/>
+            </svg>
+            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64748b; margin-top: 2px;">
+                DOWN: {:.0%} | FLAT: {:.0%} | UP: {:.0%}
+            </div>
+        </div>
     </div>
-    """.format(latest_pred["prob_down"], latest_pred["prob_flat"], latest_pred["prob_up"]), unsafe_allow_html=True)
+    """.format(angle, latest_pred["prob_down"], latest_pred["prob_flat"], latest_pred["prob_up"]), unsafe_allow_html=True)
 else:
-    col2.info("No predictions logged yet. Run Inference from sidebar.")
-    col3.info("No probability distributions logged.")
+    col2.info("INSUFFICIENT EVIDENCE — awaiting more resolved cases")
+    col3.info("INSUFFICIENT EVIDENCE — awaiting more resolved cases")
 
 # ----------------- SECTION 2: CHARTS & MOVEMENT -----------------
 st.markdown("---")
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📉 Price Action & Predictions", 
-    "📈 Walk-Forward Backtesting (Skill vs Luck)", 
-    "🎯 Predicted vs. Actual", 
-    "📋 Predictions Log"
+    "📂 Evidence Timeline", 
+    "📈 Case Backtests", 
+    "🎯 Leads vs Outcomes", 
+    "📋 Case File Ledger"
 ])
 
 with tab1:
@@ -381,16 +503,21 @@ with tab1:
     recent_candles["timestamp"] = pd.to_datetime(recent_candles["timestamp"])
     
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(recent_candles["timestamp"], recent_candles["close"], label="Spot Gold Price", color="#fbbf24")
-    ax.set_facecolor("#0f172a")
-    fig.patch.set_facecolor("#0f172a")
-    ax.spines['bottom'].set_color('#475569')
-    ax.spines['top'].set_color('#475569')
-    ax.spines['left'].set_color('#475569')
-    ax.spines['right'].set_color('#475569')
-    ax.tick_params(colors='#94a3b8')
-    ax.grid(True, color='#1e293b', linestyle='--')
-    ax.legend(facecolor='#1e293b', edgecolor='none', labelcolor='white')
+    ax.plot(recent_candles["timestamp"], recent_candles["close"], label="Spot Gold Price", color="#E8DCC0")
+    ax.set_facecolor("#0E1015")
+    fig.patch.set_facecolor("#0E1015")
+    
+    # Use RGBA tuples for matplotlib colors to prevent ValueError
+    spine_color = (232/255, 220/255, 192/255, 0.15)
+    grid_color = (232/255, 220/255, 192/255, 0.05)
+    
+    ax.spines['bottom'].set_color(spine_color)
+    ax.spines['top'].set_color(spine_color)
+    ax.spines['left'].set_color(spine_color)
+    ax.spines['right'].set_color(spine_color)
+    ax.tick_params(colors='#E8DCC0')
+    ax.grid(True, color=grid_color, linestyle='--')
+    ax.legend(facecolor='#1C2128', edgecolor='none', labelcolor='#E8DCC0')
     st.pyplot(fig)
 
 with tab2:
@@ -410,12 +537,12 @@ with tab2:
         
         with det_col1:
             st.markdown("""
-            <div class="metric-card">
-                <h4>📈 UP-Detector</h4>
-                <p>Precision: <b>{:.1%}</b></p>
-                <p>Recall: <b>{:.1%}</b></p>
-                <p>F1 Score: <b>{:.1%}</b></p>
-                <p style='color: #64748b;'>Threshold: {:.2f}</p>
+            <div class="evidence-card" style="height: 100%;">
+                <h4 style="margin: 0; font-size: 13px; color: var(--brass-accent);">📈 UP-Detector</h4>
+                <p style="margin: 8px 0 4px 0;">Precision: <b>{:.1%}</b></p>
+                <p style="margin: 4px 0;">Recall: <b>{:.1%}</b></p>
+                <p style="margin: 4px 0;">F1 Score: <b>{:.1%}</b></p>
+                <p style='color: #64748b; margin: 4px 0; font-size: 11px;'>Threshold: {:.2f}</p>
             </div>
             """.format(
                 train_metrics.get("up_precision", 0.0),
@@ -426,12 +553,12 @@ with tab2:
         
         with det_col2:
             st.markdown("""
-            <div class="metric-card">
-                <h4>📉 DOWN-Detector</h4>
-                <p>Precision: <b>{:.1%}</b></p>
-                <p>Recall: <b>{:.1%}</b></p>
-                <p>F1 Score: <b>{:.1%}</b></p>
-                <p style='color: #64748b;'>Threshold: {:.2f}</p>
+            <div class="evidence-card" style="height: 100%;">
+                <h4 style="margin: 0; font-size: 13px; color: var(--brass-accent);">📉 DOWN-Detector</h4>
+                <p style="margin: 8px 0 4px 0;">Precision: <b>{:.1%}</b></p>
+                <p style="margin: 4px 0;">Recall: <b>{:.1%}</b></p>
+                <p style="margin: 4px 0;">F1 Score: <b>{:.1%}</b></p>
+                <p style='color: #64748b; margin: 4px 0; font-size: 11px;'>Threshold: {:.2f}</p>
             </div>
             """.format(
                 train_metrics.get("down_precision", 0.0),
@@ -442,12 +569,12 @@ with tab2:
             
         with det_col3:
             st.markdown("""
-            <div class="metric-card">
-                <h4>🛡️ Meta-Model Filter</h4>
-                <p>Precision (Trust Accuracy): <b>{:.1%}</b></p>
-                <p>Filter Rate: <b>{:.1%}</b></p>
-                <p>Acted-upon Accuracy: <b>{:.1%}</b></p>
-                <p style='color: #64748b;'>Trust Threshold: {:.2f}</p>
+            <div class="evidence-card" style="height: 100%;">
+                <h4 style="margin: 0; font-size: 13px; color: var(--brass-accent);">🛡️ Meta-Model Filter</h4>
+                <p style="margin: 8px 0 4px 0;">Precision (Trust Acc): <b>{:.1%}</b></p>
+                <p style="margin: 4px 0;">Filter Rate: <b>{:.1%}</b></p>
+                <p style="margin: 4px 0;">Acted-upon Acc: <b>{:.1%}</b></p>
+                <p style='color: #64748b; margin: 4px 0; font-size: 11px;'>Trust Threshold: {:.2f}</p>
             </div>
             """.format(
                 train_metrics.get("meta_precision", 0.0),
@@ -464,21 +591,23 @@ with tab2:
             dist_data = {dist_labels.get(k, k): v for k, v in test_dist.items()}
             
             fig_dist, ax_dist = plt.subplots(figsize=(6, 3))
-            colors_dist = {"UP": "#10b981", "FLAT": "#94a3b8", "DOWN": "#ef4444"}
+            colors_dist = {"UP": "#3A7D6E", "FLAT": "#718096", "DOWN": "#8B2635"}
             bars = ax_dist.bar(
                 dist_data.keys(), 
                 dist_data.values(),
-                color=[colors_dist.get(k, "#3b82f6") for k in dist_data.keys()]
+                color=[colors_dist.get(k, "#C9A227") for k in dist_data.keys()]
             )
-            ax_dist.set_ylabel("Proportion", color="#94a3b8")
-            ax_dist.set_facecolor("#0f172a")
-            fig_dist.patch.set_facecolor("#0f172a")
-            ax_dist.tick_params(colors='#94a3b8')
+            ax_dist.set_ylabel("Proportion", color="#E8DCC0", family="IBM Plex Sans")
+            ax_dist.set_facecolor("#0E1015")
+            fig_dist.patch.set_facecolor("#0E1015")
+            ax_dist.tick_params(colors='#E8DCC0')
+            
+            spine_color = (232/255, 220/255, 192/255, 0.15)
             for spine in ax_dist.spines.values():
-                spine.set_color('#475569')
+                spine.set_color(spine_color)
             for bar, val in zip(bars, dist_data.values()):
                 ax_dist.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.01,
-                           f'{val:.1%}', ha='center', va='bottom', color='#94a3b8', fontsize=10)
+                           f'{val:.1%}', ha='center', va='bottom', color='#E8DCC0', fontsize=10)
             st.pyplot(fig_dist)
         
         # --- Feature Importance ---
@@ -491,13 +620,13 @@ with tab2:
                 feat_vals = [f[1] for f in sorted_feats]
                 
                 fig_fi, ax_fi = plt.subplots(figsize=(8, 3.5))
-                ax_fi.barh(feat_names[::-1], feat_vals[::-1], color="#3b82f6")
-                ax_fi.set_xlabel("Gain", color="#94a3b8")
-                ax_fi.set_facecolor("#0f172a")
-                fig_fi.patch.set_facecolor("#0f172a")
-                ax_fi.tick_params(colors='#94a3b8')
+                ax_fi.barh(feat_names[::-1], feat_vals[::-1], color="#C9A227")
+                ax_fi.set_xlabel("Gain", color="#E8DCC0", family="IBM Plex Sans")
+                ax_fi.set_facecolor("#0E1015")
+                fig_fi.patch.set_facecolor("#0E1015")
+                ax_fi.tick_params(colors='#E8DCC0')
                 for spine in ax_fi.spines.values():
-                    spine.set_color('#475569')
+                    spine.set_color(spine_color)
                 st.pyplot(fig_fi)
         
         # Cumulative P&L chart
@@ -511,22 +640,24 @@ with tab2:
             })
             
             fig_bt, ax_bt = plt.subplots(figsize=(10, 4.5))
-            ax_bt.plot(bt_df["Timestamp"], bt_df["Model Strategy"], label="Stock Holmes v2 Strategy", color="#10b981", linewidth=2)
-            ax_bt.plot(bt_df["Timestamp"], bt_df["Naive Sign Baseline"], label="Naive Sign Carry-Forward", color="#ef4444", linestyle="--")
-            ax_bt.set_facecolor("#0f172a")
-            fig_bt.patch.set_facecolor("#0f172a")
-            ax_bt.spines['bottom'].set_color('#475569')
-            ax_bt.spines['top'].set_color('#475569')
-            ax_bt.spines['left'].set_color('#475569')
-            ax_bt.spines['right'].set_color('#475569')
-            ax_bt.tick_params(colors='#94a3b8')
-            ax_bt.grid(True, color='#1e293b', linestyle='--')
-            ax_bt.legend(facecolor='#1e293b', edgecolor='none', labelcolor='white')
+            ax_bt.plot(bt_df["Timestamp"], bt_df["Model Strategy"], label="Stock Holmes v3 Strategy", color="#3A7D6E", linewidth=2)
+            ax_bt.plot(bt_df["Timestamp"], bt_df["Naive Sign Baseline"], label="Naive Sign Carry-Forward", color="#8B2635", linestyle="--")
+            ax_bt.set_facecolor("#0E1015")
+            fig_bt.patch.set_facecolor("#0E1015")
+            
+            grid_color = (232/255, 220/255, 192/255, 0.05)
+            ax_bt.spines['bottom'].set_color(spine_color)
+            ax_bt.spines['top'].set_color(spine_color)
+            ax_bt.spines['left'].set_color(spine_color)
+            ax_bt.spines['right'].set_color(spine_color)
+            ax_bt.tick_params(colors='#E8DCC0')
+            ax_bt.grid(True, color=grid_color, linestyle='--')
+            ax_bt.legend(facecolor='#1C2128', edgecolor='none', labelcolor='#E8DCC0')
             st.pyplot(fig_bt)
         else:
             st.warning("No walk-forward backtesting metrics found. Please Retrain model to generate backtest logs.")
     else:
-        st.info("No training metrics registered yet. Please click 'Retrain LightGBM' in the sidebar to build the model and log performance.")
+        st.markdown('<div style="font-family: \'Special Elite\', monospace; padding: 20px; text-align: center; border: 1px dashed var(--brass-accent); color: var(--brass-accent);">INSUFFICIENT EVIDENCE — awaiting more resolved cases</div>', unsafe_allow_html=True)
 
 with tab3:
     st.markdown("#### Predicted vs. Actual Price Overlay")
@@ -573,83 +704,121 @@ with tab3:
                 # Plotly Chart Setup
                 fig_pa = go.Figure()
                 
-                # 1. Line chart of actual prices
+                # 1. Line chart of actual prices (Aged Paper color)
                 fig_pa.add_trace(go.Scatter(
                     x=resolved_preds["target_timestamp"],
                     y=resolved_preds["actual_close"],
                     mode="lines",
                     name="Actual Spot Close",
-                    line=dict(color="#fbbf24", width=2)
+                    line=dict(color="#E8DCC0", width=1.5)
                 ))
                 
-                # 2. Scatter overlay for predictions
-                colors = {"UP": "#10b981", "DOWN": "#ef4444", "FLAT": "#94a3b8"}
-                symbols = {
-                    ("UP", True): "triangle-up",
-                    ("UP", False): "triangle-up-open",
-                    ("DOWN", True): "triangle-down",
-                    ("DOWN", False): "triangle-down-open",
-                    ("FLAT", True): "circle",
-                    ("FLAT", False): "circle-open"
-                }
+                # 2. Draw connecting string lines
+                correct_x = []
+                correct_y = []
+                incorrect_x = []
+                incorrect_y = []
                 
-                for (pred_val, is_correct), group in resolved_preds.groupby(
-                    [resolved_preds["predicted"], resolved_preds["predicted_direction"] == resolved_preds["actual_direction"]]
-                ):
-                    marker_symbol = symbols.get((pred_val, is_correct), "circle")
-                    color = colors.get(pred_val, "#94a3b8")
+                for _, row in resolved_preds.iterrows():
+                    x0 = row["timestamp"]
+                    y0 = row["spot_price_at_prediction"]
+                    x1 = row["target_timestamp"]
+                    y1 = row["actual_close"]
                     
-                    # Size based on confidence
-                    sizes = group["confidence"].map(lambda c: 10 + 10 * c).tolist()
+                    if pd.isna(y0) or pd.isna(y1) or y0 == 0 or y1 == 0:
+                        continue
+                        
+                    is_correct = row["predicted_direction"] == row["actual_direction"]
+                    
+                    if is_correct:
+                        correct_x.extend([x0, x1, None])
+                        correct_y.extend([y0, y1, None])
+                    else:
+                        incorrect_x.extend([x0, x1, None])
+                        incorrect_y.extend([y0, y1, None])
+                
+                if correct_x:
+                    fig_pa.add_trace(go.Scatter(
+                        x=correct_x, y=correct_y,
+                        mode="lines",
+                        line=dict(color="#C9A227", width=1.0),
+                        name="Confirmed Lead Thread",
+                        hoverinfo="skip"
+                    ))
+                if incorrect_x:
+                    fig_pa.add_trace(go.Scatter(
+                        x=incorrect_x, y=incorrect_y,
+                        mode="lines",
+                        line=dict(color="#8B2635", width=1.0, dash="dash"),
+                        name="Flawed Lead Thread (Red String)",
+                        hoverinfo="skip"
+                    ))
+                
+                # 3. Scatter overlay for predictions at their entry points
+                colors = {"UP": "#3A7D6E", "DOWN": "#8B2635", "FLAT": "#718096"}
+                
+                for pred_val, group in resolved_preds.groupby("predicted"):
+                    color = colors.get(pred_val, "#718096")
+                    sizes = group["confidence"].map(lambda c: 8 + 8 * c).tolist()
                     
                     fig_pa.add_trace(go.Scatter(
-                        x=group["target_timestamp"],
-                        y=group["actual_close"],
+                        x=group["timestamp"],
+                        y=group["spot_price_at_prediction"],
                         mode="markers",
-                        name=f"Predicted {pred_val} ({'Correct' if is_correct else 'Incorrect'})",
+                        name=f"Lead: {pred_val} (Pin)",
                         marker=dict(
-                            symbol=marker_symbol,
+                            symbol="circle-dot",
                             color=color,
                             size=sizes,
                             opacity=0.9,
-                            line=dict(color=color, width=1.5)
+                            line=dict(color=color, width=1)
                         ),
                         hoverinfo="text",
                         hovertext=group.apply(
-                            lambda r: f"Time: {r['target_timestamp']}<br>Pred: {r['predicted']}<br>Actual Close: ${r['actual_close']:.2f}<br>Base Price: ${r['spot_price_at_prediction']:.2f}<br>Conf: {r['confidence']:.1%}",
+                            lambda r: f"Entry Time: {r['timestamp']}<br>Lead: {r['predicted']}<br>Base Price: ${r['spot_price_at_prediction']:.2f}<br>Resolution: {r['target_timestamp']}<br>Close: ${r['actual_close']:.2f}<br>Certainty: {r['confidence']:.1%}",
                             axis=1
                         )
                     ))
                     
                 fig_pa.update_layout(
-                    paper_bgcolor="#0f172a",
-                    plot_bgcolor="#0f172a",
-                    xaxis=dict(gridcolor="#1e293b", tickcolor="#94a3b8", tickfont=dict(color="#94a3b8")),
-                    yaxis=dict(gridcolor="#1e293b", tickcolor="#94a3b8", tickfont=dict(color="#94a3b8"), title=dict(text="Price (USD)", font=dict(color="#94a3b8"))),
-                    legend=dict(font=dict(color="#94a3b8"), bgcolor="rgba(15,23,42,0.8)"),
+                    paper_bgcolor="#0E1015",
+                    plot_bgcolor="#0E1015",
+                    xaxis=dict(
+                        gridcolor="rgba(232, 220, 192, 0.05)",
+                        tickcolor="#E8DCC0",
+                        tickfont=dict(color="#E8DCC0", family="IBM Plex Mono")
+                    ),
+                    yaxis=dict(
+                        gridcolor="rgba(232, 220, 192, 0.05)",
+                        tickcolor="#E8DCC0",
+                        tickfont=dict(color="#E8DCC0", family="IBM Plex Mono"),
+                        title=dict(text="Price (USD)", font=dict(color="#E8DCC0", family="Special Elite", size=12))
+                    ),
+                    legend=dict(
+                        font=dict(color="#E8DCC0", family="IBM Plex Sans", size=10),
+                        bgcolor="rgba(14,16,21,0.85)"
+                    ),
                     margin=dict(l=40, r=40, t=20, b=40)
                 )
                 
-                st.plotly_chart(fig_pa)
+                st.plotly_chart(fig_pa, use_container_width=True)
 
 with tab4:
-    st.markdown("#### Predictions History Log")
+    st.markdown("#### Case File Ledger")
     if not preds.empty:
         # Format prediction direction
         def format_dir(x):
-            return "📈 UP" if x == 1 else "📉 DOWN" if x == -1 else "➡️ FLAT"
+            return "UP" if x == 1 else "DOWN" if x == -1 else "FLAT"
             
         display_preds = preds.copy()
-        # Use the predicted string from JSONL directly if available, else derive from int
         if "predicted" not in display_preds.columns or display_preds["predicted"].isna().all():
             display_preds["predicted"] = display_preds["predicted_direction"].map(format_dir)
         else:
             display_preds["predicted"] = display_preds["predicted"].map(
-                lambda x: "📈 UP" if x == "UP" else "📉 DOWN" if x == "DOWN" else "➡️ FLAT" if x == "FLAT" else format_dir(x)
+                lambda x: "UP" if x == "UP" else "DOWN" if x == "DOWN" else "FLAT" if x == "FLAT" else format_dir(x)
             )
         display_preds["actual"] = display_preds["actual_direction"].map(lambda x: format_dir(x) if pd.notna(x) else "⏳ PENDING")
         
-        # Map status from JSONL, then override with correctness for RESOLVED ones
         if "status" in display_preds.columns:
             display_preds["result"] = np.where(
                 display_preds["status"] != "RESOLVED", "⏳ PENDING",
@@ -660,13 +829,78 @@ with tab4:
                 display_preds["actual_direction"].isna(), "⏳ PENDING",
                 np.where(display_preds["predicted_direction"] == display_preds["actual_direction"], "✅ CORRECT", "❌ WRONG")
             )
-        
-        # Columns to display
-        display_cols = ["timestamp", "predicted", "confidence"]
+            
+        # Custom HTML Case File Ledger Table
+        html = """
+        <div style="overflow-x: auto; margin-top: 15px;">
+        <table style="width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; background-color: var(--panel-surface); color: var(--aged-paper); font-size: 13px;">
+          <thead>
+            <tr style="border-bottom: 2px solid var(--brass-accent); text-align: left;">
+              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">TIMESTAMP</th>
+              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">LEAD FORECAST</th>
+              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">CERTAINTY</th>
+        """
         if "meta_confidence" in display_preds.columns:
-            display_cols.append("meta_confidence")
-        display_cols.extend(["actual", "actual_close", "result"])
+            html += '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">META TRUST</th>'
+        html += """
+              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">OUTCOME</th>
+              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">ACTUAL CLOSE</th>
+              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">STATUS STAMP</th>
+            </tr>
+          </thead>
+          <tbody>
+        """
         
-        st.dataframe(display_preds[display_cols].head(50))
+        for idx, row in display_preds.reset_index(drop=True).head(50).iterrows():
+            bg_style = "background-color: #151a21;" if idx % 2 == 1 else "background-color: var(--panel-surface);"
+            
+            res_val = row["result"]
+            if res_val == "✅ CORRECT":
+                stamp_html = '<span class="stamp-confirmed">CONFIRMED</span>'
+            elif res_val == "❌ WRONG":
+                stamp_html = '<span class="stamp-wrong">WRONG</span>'
+            else:
+                stamp_html = '<span class="stamp-pending">PENDING</span>'
+                
+            pred_str = row["predicted"]
+            if pred_str == "UP":
+                pred_color = "color: var(--muted-teal); font-weight: bold;"
+            elif pred_str == "DOWN":
+                pred_color = "color: var(--evidence-red); font-weight: bold;"
+            else:
+                pred_color = "color: #718096;"
+                
+            actual_str = row["actual"]
+            if actual_str == "UP":
+                actual_color = "color: var(--muted-teal);"
+            elif actual_str == "DOWN":
+                actual_color = "color: var(--evidence-red);"
+            else:
+                actual_color = "color: #718096;"
+                
+            close_val = f"${row['actual_close']:,.2f}" if pd.notna(row["actual_close"]) else "—"
+            meta_conf_td = ""
+            if "meta_confidence" in display_preds.columns:
+                m_conf = f"{row['meta_confidence']:.1%}" if pd.notna(row.get("meta_confidence")) else "—"
+                meta_conf_td = f'<td style="padding: 10px 12px;">{m_conf}</td>'
+                
+            html += f"""
+            <tr style="{bg_style} border-bottom: 1px solid rgba(255,255,255,0.02);">
+              <td style="padding: 10px 12px;">{row['timestamp']}</td>
+              <td style="padding: 10px 12px; {pred_color}">{pred_str}</td>
+              <td style="padding: 10px 12px;">{row['confidence']:.1%}</td>
+              {meta_conf_td}
+              <td style="padding: 10px 12px; {actual_color}">{actual_str}</td>
+              <td style="padding: 10px 12px;">{close_val}</td>
+              <td style="padding: 10px 12px;">{stamp_html}</td>
+            </tr>
+            """
+            
+        html += """
+          </tbody>
+        </table>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
     else:
-        st.info("No predictions logged to database yet.")
+        st.markdown('<div style="font-family: \'Special Elite\', monospace; padding: 20px; text-align: center; border: 1px dashed var(--brass-accent); color: var(--brass-accent);">INSUFFICIENT EVIDENCE — awaiting more resolved cases</div>', unsafe_allow_html=True)
