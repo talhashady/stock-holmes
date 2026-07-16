@@ -118,7 +118,7 @@ class TestIntegrationPipeline(unittest.TestCase):
             db_mod.DEFAULT_DB_PATH = TEST_DB_PATH
             train_mod.get_all_candles = lambda **kwargs: get_all_candles(TEST_DB_PATH, **kwargs)
             predict_mod.get_all_candles = lambda **kwargs: get_all_candles(TEST_DB_PATH, **kwargs)
-            predict_mod.save_prediction = lambda ts, pred, conf, probs: save_prediction(ts, pred, conf, probs, TEST_DB_PATH)
+            predict_mod.save_prediction = lambda ts, pred, conf, probs, **kwargs: save_prediction(ts, pred, conf, probs, TEST_DB_PATH, **kwargs)
             
             # Run model training with binary classifiers
             metrics = train_mod.train_pipeline(test_ratio=0.1, val_ratio=0.1)

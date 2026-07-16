@@ -298,6 +298,11 @@ if not preds.empty:
     pred_dir = latest_pred["predicted_direction"]
     conf = latest_pred["confidence"]
     
+    meta_conf_val = latest_pred.get("meta_confidence")
+    meta_info = ""
+    if pd.notna(meta_conf_val) and meta_conf_val is not None:
+        meta_info = f" | Meta Trust: {float(meta_conf_val):.1%}"
+    
     if pred_dir == 1:
         glow_class = "glow-up"
         dir_text = "📈 UP"
@@ -312,9 +317,9 @@ if not preds.empty:
     <div class="metric-card">
         <h4>🕵️‍♂️ Predicted Direction (5m ahead)</h4>
         <h2 class="{}" style='font-size: 36px; margin: 5px 0;'>{}</h2>
-        <p style='color: #64748b; font-size: 13px;'>Model Confidence: {:.1%}</p>
+        <p style='color: #64748b; font-size: 13px;'>Model Confidence: {:.1%}{}</p>
     </div>
-    """.format(glow_class, dir_text, conf), unsafe_allow_html=True)
+    """.format(glow_class, dir_text, conf, meta_info), unsafe_allow_html=True)
     
     # Probs distribution
     col3.markdown("""
@@ -369,8 +374,8 @@ with tab2:
                       delta=f"{train_metrics.get('high_confidence_count', 0)} samples")
         
         # --- Binary Model Per-Detector Metrics ---
-        st.markdown("#### 🎯 Binary Detector Metrics (UP / DOWN)")
-        det_col1, det_col2 = st.columns(2)
+        st.markdown("#### 🎯 Binary Detector Metrics (UP / DOWN / META)")
+        det_col1, det_col2, det_col3 = st.columns(3)
         
         with det_col1:
             st.markdown("""
@@ -402,6 +407,22 @@ with tab2:
                 train_metrics.get("down_recall", 0.0),
                 train_metrics.get("down_f1", 0.0),
                 train_metrics.get("down_threshold", 0.5),
+            ), unsafe_allow_html=True)
+            
+        with det_col3:
+            st.markdown("""
+            <div class="metric-card">
+                <h4>🛡️ Meta-Model Filter</h4>
+                <p>Precision (Trust Accuracy): <b>{:.1%}</b></p>
+                <p>Filter Rate: <b>{:.1%}</b></p>
+                <p>Acted-upon Accuracy: <b>{:.1%}</b></p>
+                <p style='color: #64748b;'>Trust Threshold: {:.2f}</p>
+            </div>
+            """.format(
+                train_metrics.get("meta_precision", 0.0),
+                train_metrics.get("meta_filter_rate", 0.0),
+                train_metrics.get("meta_acted_accuracy", 0.0),
+                train_metrics.get("meta_trust_threshold", 0.5),
             ), unsafe_allow_html=True)
         
         # --- Class Distribution ---
@@ -578,7 +599,7 @@ with tab3:
                     margin=dict(l=40, r=40, t=20, b=40)
                 )
                 
-                st.plotly_chart(fig_pa, use_container_width=True)
+                st.plotly_chart(fig_pa)
 
 with tab4:
     st.markdown("#### Predictions History Log")
@@ -610,7 +631,11 @@ with tab4:
             )
         
         # Columns to display
-        display_cols = ["timestamp", "predicted", "confidence", "actual", "actual_close", "result"]
-        st.dataframe(display_preds[display_cols].head(50), use_container_width=True)
+        display_cols = ["timestamp", "predicted", "confidence"]
+        if "meta_confidence" in display_preds.columns:
+            display_cols.append("meta_confidence")
+        display_cols.extend(["actual", "actual_close", "result"])
+        
+        st.dataframe(display_preds[display_cols].head(50))
     else:
         st.info("No predictions logged to database yet.")

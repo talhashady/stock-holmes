@@ -297,7 +297,11 @@ def build_features_df(
     is_training: bool = False,
     flat_threshold_pct: float = 0.0001,
     df_eurusd: Optional[pd.DataFrame] = None,
-    df_usdjpy: Optional[pd.DataFrame] = None
+    df_usdjpy: Optional[pd.DataFrame] = None,
+    use_triple_barrier: bool = True,
+    pt_multiplier: float = 1.0,
+    sl_multiplier: float = 1.0,
+    max_holding_bars: int = 5
 ) -> Tuple[pd.DataFrame, list]:
     """
     Builds the full feature matrix from OHLCV DataFrame.
@@ -364,22 +368,55 @@ def build_features_df(
     feature_cols = available_features
     
     if is_training:
-        # Define target: 5-minute ahead close direction.
-        # target_t = (close_t+5 - close_t) / close_t
-        future_close = df["close"].shift(-5)
-        forward_return = (future_close - df["close"]) / df["close"]
-        
-        # 3-way classification: UP (1), DOWN (-1), FLAT (0)
-        target = pd.Series(0, index=df.index)
-        target[forward_return > flat_threshold_pct] = 1
-        target[forward_return < -flat_threshold_pct] = -1
-        
-        # We need to align targets and features. Since we shift -5, 
-        # the last 5 rows won't have targets. We drop them during training.
-        df["target"] = target
-        df["target_return"] = forward_return
-        # We also drop rows at the beginning that don't have enough history for EMAs/Rolling metrics
-        df = df.dropna(subset=feature_cols + ["target", "target_return"])
+        if use_triple_barrier:
+            # Generate labels using the triple-barrier method
+            from src.labeling.triple_barrier import apply_triple_barrier_labels
+            
+            # Create a temporary 'atr' column mapped to 'atr_14' for raw ATR values
+            df_temp = df.copy()
+            df_temp["atr"] = df_temp["atr_14"]
+            
+            df_temp = apply_triple_barrier_labels(
+                df_temp,
+                pt_multiplier=pt_multiplier,
+                sl_multiplier=sl_multiplier,
+                max_holding_bars=max_holding_bars,
+                atr_column="atr",
+                close_column="close"
+            )
+            
+            df["target"] = df_temp["tb_label"]
+            df["tb_t_touch_idx"] = df_temp["tb_t_touch_idx"]
+            df["tb_holding_bars"] = df_temp["tb_holding_bars"]
+            df["tb_barrier_type"] = df_temp["tb_barrier_type"]
+            
+            # For backtesting, calculate the return at the actual touch time.
+            t_touch_idx = df["tb_t_touch_idx"].values
+            close_vals = df["close"].values
+            
+            forward_return = np.zeros(len(df))
+            for idx in range(len(df)):
+                touch_idx = int(t_touch_idx[idx])
+                if touch_idx < len(df) and touch_idx > idx:
+                    forward_return[idx] = (close_vals[touch_idx] - close_vals[idx]) / close_vals[idx]
+            
+            df["target_return"] = forward_return
+            
+            # Drop rows at the beginning that lack history, and rows at the end with insufficient forward data
+            # Also drop rows where target is NaN (i.e. insufficient_data)
+            df = df.dropna(subset=feature_cols + ["target", "target_return"])
+        else:
+            # Fallback to the old fixed-horizon labeling logic
+            future_close = df["close"].shift(-5)
+            forward_return = (future_close - df["close"]) / df["close"]
+            
+            target = pd.Series(0, index=df.index)
+            target[forward_return > flat_threshold_pct] = 1
+            target[forward_return < -flat_threshold_pct] = -1
+            
+            df["target"] = target
+            df["target_return"] = forward_return
+            df = df.dropna(subset=feature_cols + ["target", "target_return"])
     else:
         # For live inference, we only need to drop rows at the beginning that lack history,
         # but keep the very last row (the current live tick) to predict its future direction.

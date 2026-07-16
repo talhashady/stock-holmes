@@ -17,7 +17,7 @@ from src.serving.db_utils import (
 from src.features.builder import build_features_df
 from src.models.train import (
     train_pipeline, combine_binary_predictions,
-    MODEL_UP_PATH, MODEL_DOWN_PATH, MODEL_LEGACY_PATH,
+    MODEL_UP_PATH, MODEL_DOWN_PATH, MODEL_META_PATH, MODEL_LEGACY_PATH,
     METRICS_SAVE_PATH
 )
 
@@ -26,6 +26,7 @@ logger = logging.getLogger("models.predict")
 # Configurable thresholds — can be tuned independently per model
 DEFAULT_UP_THRESHOLD = 0.50
 DEFAULT_DOWN_THRESHOLD = 0.50
+DEFAULT_TRUST_THRESHOLD = 0.50
 
 
 def load_tuned_thresholds() -> tuple:
@@ -34,7 +35,7 @@ def load_tuned_thresholds() -> tuple:
     Falls back to defaults if the file doesn't exist or is malformed.
     
     Returns:
-        Tuple of (up_threshold, down_threshold).
+        Tuple of (up_threshold, down_threshold, meta_trust_threshold).
     """
     if os.path.exists(METRICS_SAVE_PATH):
         try:
@@ -42,11 +43,12 @@ def load_tuned_thresholds() -> tuple:
                 metrics = json.load(f)
             up_thresh = metrics.get("up_threshold", DEFAULT_UP_THRESHOLD)
             down_thresh = metrics.get("down_threshold", DEFAULT_DOWN_THRESHOLD)
-            logger.info(f"Loaded tuned thresholds from metrics.json: UP={up_thresh:.3f}, DOWN={down_thresh:.3f}")
-            return float(up_thresh), float(down_thresh)
+            trust_thresh = metrics.get("meta_trust_threshold", DEFAULT_TRUST_THRESHOLD)
+            logger.info(f"Loaded tuned thresholds from metrics.json: UP={up_thresh:.3f}, DOWN={down_thresh:.3f}, TRUST={trust_thresh:.3f}")
+            return float(up_thresh), float(down_thresh), float(trust_thresh)
         except Exception as e:
             logger.warning(f"Could not load thresholds from metrics.json: {e}. Using defaults.")
-    return DEFAULT_UP_THRESHOLD, DEFAULT_DOWN_THRESHOLD
+    return DEFAULT_UP_THRESHOLD, DEFAULT_DOWN_THRESHOLD, DEFAULT_TRUST_THRESHOLD
 
 
 def get_log_path() -> str:
@@ -72,22 +74,24 @@ def append_prediction(prediction: dict, path: Optional[str] = None) -> None:
 
 def get_trained_models() -> tuple:
     """
-    Loads both binary classifiers (UP-detector and DOWN-detector).
+    Loads primary binary classifiers (UP-detector and DOWN-detector) and secondary meta-model.
     If models don't exist, triggers the training pipeline first.
     
     Returns:
-        Tuple of (model_up, model_down).
+        Tuple of (model_up, model_down, model_meta).
     """
-    if not os.path.exists(MODEL_UP_PATH) or not os.path.exists(MODEL_DOWN_PATH):
-        logger.warning("Trained binary model files not found. Running training pipeline...")
+    if not os.path.exists(MODEL_UP_PATH) or not os.path.exists(MODEL_DOWN_PATH) or not os.path.exists(MODEL_META_PATH):
+        logger.warning("Trained model files not found. Running training pipeline...")
         train_pipeline()
     
     with open(MODEL_UP_PATH, "rb") as f:
         model_up = pickle.load(f)
     with open(MODEL_DOWN_PATH, "rb") as f:
         model_down = pickle.load(f)
+    with open(MODEL_META_PATH, "rb") as f:
+        model_meta = pickle.load(f)
     
-    return model_up, model_down
+    return model_up, model_down, model_meta
 
 
 def check_live_regression(log_path: str, window_size: int = 30, threshold: float = 0.90) -> None:
@@ -153,29 +157,23 @@ def check_live_regression(log_path: str, window_size: int = 30, threshold: float
 def predict_latest(
     flat_threshold_pct: float = 0.0001,
     up_threshold: float = None,
-    down_threshold: float = None
+    down_threshold: float = None,
+    meta_trust_threshold: float = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Builds features on the latest candles, loads both binary classifiers,
-    makes a 5-minute ahead direction prediction using the combination rule,
-    saves it to SQLite, and runs the actuals backfill process.
-    
-    Cross-asset data (DXY, USDJPY) is fetched from SQLite. If unavailable,
-    correlation features degrade gracefully to NaN and are excluded from
-    the feature matrix — the model runs on remaining features only.
+    Builds features on the latest candles, loads primary classifiers and meta-model,
+    makes a 5-minute ahead direction prediction, filters it using the meta-model,
+    saves it to SQLite and JSONL, and runs the actuals backfill process.
     
     Thresholds default to auto-tuned values from metrics.json if available.
-    
-    Args:
-        flat_threshold_pct: Threshold for UP/DOWN vs FLAT classification.
-        up_threshold: Decision threshold for UP-detector (None = load from metrics).
-        down_threshold: Decision threshold for DOWN-detector (None = load from metrics).
     """
     # Load tuned thresholds if not explicitly provided
-    if up_threshold is None or down_threshold is None:
-        tuned_up, tuned_down = load_tuned_thresholds()
+    if up_threshold is None or down_threshold is None or meta_trust_threshold is None:
+        tuned_up, tuned_down, tuned_trust = load_tuned_thresholds()
         up_threshold = up_threshold if up_threshold is not None else tuned_up
         down_threshold = down_threshold if down_threshold is not None else tuned_down
+        meta_trust_threshold = meta_trust_threshold if meta_trust_threshold is not None else tuned_trust
+        
     logger.info("Fetching latest cached candles from database...")
     df_raw = get_all_candles()
     
@@ -218,9 +216,9 @@ def predict_latest(
     
     logger.info(f"Generating prediction for latest candle at timestamp: {latest_ts}")
     
-    # Load both binary models
+    # Load both binary models and meta model
     try:
-        model_up, model_down = get_trained_models()
+        model_up, model_down, model_meta = get_trained_models()
     except Exception as e:
         logger.error(f"Error loading/training models: {e}")
         return None
@@ -255,18 +253,40 @@ def predict_latest(
         up_threshold=up_threshold, down_threshold=down_threshold
     )
     
-    pred_class = int(pred_array[0])
-    confidence = float(conf_array[0])
+    primary_pred_class = int(pred_array[0])
+    primary_confidence = float(conf_array[0])
+    
+    # Run secondary meta-model filter if prediction is directional
+    from src.labeling.meta_labeling import build_meta_features, apply_meta_filter
+    
+    df_features_row = pd.DataFrame([latest_row]).reset_index(drop=True)
+    meta_df_row = build_meta_features(
+        df_features_row,
+        np.array([prob_up]),
+        np.array([prob_down]),
+        np.array([primary_pred_class])
+    )
+    
+    final_pred_class, meta_confidence = apply_meta_filter(
+        primary_pred=primary_pred_class,
+        prob_up=prob_up,
+        prob_down=prob_down,
+        meta_model=model_meta,
+        meta_row=meta_df_row.values,
+        trust_threshold=meta_trust_threshold
+    )
     
     # Derive probability triplet for JSONL schema compatibility.
-    # prob_up and prob_down come directly from the binary models.
-    # prob_flat is synthetic: represents the "no signal" certainty.
     prob_flat_synthetic = float(max(0.0, 1.0 - prob_up - prob_down))
     
-    # Save the prediction to the database
+    # Save the prediction to the database (with meta_confidence passed dynamically)
     probs_tuple = (float(prob_down), float(prob_flat_synthetic), float(prob_up))
-    save_prediction(latest_ts, pred_class, confidence, probs_tuple)
-    logger.info(f"Saved prediction for {latest_ts}: Direction={pred_class}, Conf={confidence:.2%}")
+    save_prediction(
+        latest_ts, final_pred_class, primary_confidence, probs_tuple,
+        meta_confidence=meta_confidence
+    )
+    logger.info(f"Saved prediction for {latest_ts}: Direction={final_pred_class} (Primary={primary_pred_class}), "
+                f"Conf={primary_confidence:.2%}, Meta Trust={meta_confidence:.2%}")
     logger.info(f"  P(UP)={prob_up:.3f}, P(DOWN)={prob_down:.3f}, P(FLAT)~={prob_flat_synthetic:.3f}")
     
     # Run backfill of actuals for past predictions in SQLite and JSONL
@@ -284,8 +304,9 @@ def predict_latest(
         
     return {
         "timestamp": latest_ts,
-        "prediction": pred_class,
-        "confidence": confidence,
+        "prediction": final_pred_class,
+        "confidence": primary_confidence,
+        "meta_confidence": meta_confidence,
         "prob_down": float(prob_down),
         "prob_flat": float(prob_flat_synthetic),
         "prob_up": float(prob_up),
@@ -301,4 +322,5 @@ if __name__ == "__main__":
         print(f"Close Price: {res['close_price']:.2f}")
         dir_str = "UP" if res['prediction'] == 1 else "DOWN" if res['prediction'] == -1 else "FLAT"
         print(f"Predicted direction (5 mins ahead): {dir_str} (Confidence: {res['confidence']:.2%})")
+        print(f"Meta Trust Confidence: {res['meta_confidence']:.2%}")
         print(f"Probability Distribution: Down={res['prob_down']:.1%}, Flat={res['prob_flat']:.1%}, Up={res['prob_up']:.1%}")

@@ -1,6 +1,7 @@
 import os
 import logging
 import pickle
+import json
 import numpy as np
 import pandas as pd
 import lightgbm as lgb
@@ -16,6 +17,7 @@ MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 
 MODEL_UP_PATH = os.path.join(MODEL_DIR, "model_up.pkl")
 MODEL_DOWN_PATH = os.path.join(MODEL_DIR, "model_down.pkl")
+MODEL_META_PATH = os.path.join(MODEL_DIR, "model_meta.pkl")
 
 # Legacy single-model path (kept for backward-compatible detection)
 MODEL_LEGACY_PATH = os.path.join(MODEL_DIR, "model.pkl")
@@ -149,12 +151,24 @@ def evaluate_combined_predictions(
 # Training Pipeline
 # ---------------------------------------------------------------------------
 
+class DummyMetaModel:
+    def __init__(self, num_features: int = 0):
+        self.num_features = num_features
+    def predict(self, X):
+        return np.ones(len(X))
+    def feature_importance(self, importance_type="gain"):
+        return np.zeros(self.num_features)
+
 def train_pipeline(
     flat_threshold_pct: float = 0.0001, 
     test_ratio: float = 0.2, 
     val_ratio: float = 0.1, 
     up_threshold: float = 0.50,
-    down_threshold: float = 0.50
+    down_threshold: float = 0.50,
+    use_triple_barrier: bool = True,
+    pt_multiplier: float = 1.0,
+    sl_multiplier: float = 1.0,
+    max_holding_bars: int = 5
 ) -> Dict[str, Any]:
     """
     Runs the full training pipeline with two independent binary classifiers:
@@ -170,6 +184,10 @@ def train_pipeline(
         val_ratio: Fraction of data used for early-stopping validation.
         up_threshold: Decision threshold for UP-detector.
         down_threshold: Decision threshold for DOWN-detector.
+        use_triple_barrier: Whether to use triple-barrier labeling.
+        pt_multiplier: Profit-taking barrier multiplier in ATR units.
+        sl_multiplier: Stop-loss barrier multiplier in ATR units.
+        max_holding_bars: Maximum holding period in bars.
     """
     logger.info("Loading candles from SQLite database...")
     df_raw = get_all_candles()
@@ -187,11 +205,36 @@ def train_pipeline(
     df_features, feature_cols = build_features_df(
         df_raw, is_training=True, flat_threshold_pct=flat_threshold_pct,
         df_eurusd=df_eurusd if not df_eurusd.empty else None,
-        df_usdjpy=df_usdjpy if not df_usdjpy.empty else None
+        df_usdjpy=df_usdjpy if not df_usdjpy.empty else None,
+        use_triple_barrier=use_triple_barrier,
+        pt_multiplier=pt_multiplier,
+        sl_multiplier=sl_multiplier,
+        max_holding_bars=max_holding_bars
     )
     
     # Sort chronologically to prevent leak
-    df_features = df_features.sort_values(by="timestamp").reset_index(drop=True)
+    df_features = df_features.sort_values(by="timestamp").reset_index(names="orig_index")
+    
+    metrics = {}
+    
+    # Run triple-barrier diagnostics if applicable
+    if use_triple_barrier:
+        from src.labeling.triple_barrier import validate_triple_barrier_labels
+        # Generate old labels for comparison
+        future_close_old = df_raw["close"].shift(-5)
+        forward_return_old = (future_close_old - df_raw["close"]) / df_raw["close"]
+        old_labels = pd.Series(0, index=df_raw.index)
+        old_labels[forward_return_old > flat_threshold_pct] = 1
+        old_labels[forward_return_old < -flat_threshold_pct] = -1
+        
+        tb_stats = validate_triple_barrier_labels(df_features, old_labels=old_labels)
+        metrics.update(tb_stats)
+        metrics["labeling_method"] = "triple_barrier"
+        metrics["pt_multiplier"] = pt_multiplier
+        metrics["sl_multiplier"] = sl_multiplier
+        metrics["max_holding_bars"] = max_holding_bars
+    else:
+        metrics["labeling_method"] = "fixed_horizon"
     
     X = df_features[feature_cols]
     y = df_features["target"]
@@ -203,27 +246,83 @@ def train_pipeline(
     n_samples = len(df_features)
     test_size = int(n_samples * test_ratio)
     val_size = int(n_samples * val_ratio)
-    train_size = n_samples - test_size - val_size
+    meta_size = int(n_samples * 0.10)  # Meta-model training gets 10%
+    primary_size = n_samples - test_size - val_size - meta_size
     
-    logger.info(f"Splitting data chronologically: Train={train_size}, Val={val_size}, Test={test_size}")
+    logger.info(f"Splitting data chronologically: TrainPrimary={primary_size}, TrainMeta={meta_size}, Val={val_size}, Test={test_size}")
     
-    # Purge 5-candle target lookup boundaries to prevent lookahead leakage
-    X_train = X.iloc[:train_size - 5]
-    X_val = X.iloc[train_size:train_size + val_size - 5]
-    X_test = X.iloc[train_size + val_size:]
+    # 4-way chronological splits with lookahead-safe purging
+    if use_triple_barrier and "tb_t_touch_idx" in df_features.columns:
+        # Create map from original index to reset index
+        orig_to_reset = pd.Series(df_features.index, index=df_features["orig_index"])
+        
+        # Map original touch indices to reset index positions
+        touch_indices = df_features["tb_t_touch_idx"].map(orig_to_reset).fillna(len(df_features)).astype(int).values
+        
+        primary_boundary = primary_size
+        meta_boundary = primary_size + meta_size
+        val_test_boundary = primary_size + meta_size + val_size
+        
+        # Training rows: must resolve before TrainMeta begins
+        train_mask = (df_features.index < primary_boundary) & (touch_indices < primary_boundary)
+        # Meta training rows: must resolve before Validation begins
+        meta_mask = (df_features.index >= primary_boundary) & (df_features.index < meta_boundary) & (touch_indices < meta_boundary)
+        # Validation rows: must resolve before Test begins
+        val_mask = (df_features.index >= meta_boundary) & (df_features.index < val_test_boundary) & (touch_indices < val_test_boundary)
+        # Test rows: final segment
+        test_mask = df_features.index >= val_test_boundary
+        
+        X_train = X[train_mask]
+        X_meta = X[meta_mask]
+        X_val = X[val_mask]
+        X_test = X[test_mask]
+        
+        y_up_train = y_up[train_mask]
+        y_up_val = y_up[val_mask]
+        y_up_test = y_up[test_mask]
+        
+        y_down_train = y_down[train_mask]
+        y_down_val = y_down[val_mask]
+        y_down_test = y_down[test_mask]
+        
+        y_train_orig = y[train_mask].values
+        y_meta_orig = y[meta_mask].values
+        y_val_orig = y[val_mask].values
+        y_test_orig = y[test_mask].values
+        
+        # Verify no lookahead bias
+        assert (touch_indices[train_mask] < primary_boundary).all(), "Lookahead bias in train split!"
+        assert (touch_indices[meta_mask] < meta_boundary).all(), "Lookahead bias in meta split!"
+        assert (touch_indices[val_mask] < val_test_boundary).all(), "Lookahead bias in val split!"
+        
+        logger.info(f"Purged sizes: Train={len(X_train)} (purged {primary_size - len(X_train)}), "
+                    f"Meta={len(X_meta)} (purged {meta_size - len(X_meta)}), "
+                    f"Val={len(X_val)} (purged {val_size - len(X_val)})")
+    else:
+        # Fallback (non-purged 4-way split)
+        primary_boundary = primary_size
+        meta_boundary = primary_size + meta_size
+        val_test_boundary = primary_size + meta_size + val_size
+        
+        X_train = X.iloc[:primary_boundary]
+        X_meta = X.iloc[primary_boundary:meta_boundary]
+        X_val = X.iloc[meta_boundary:val_test_boundary]
+        X_test = X.iloc[val_test_boundary:]
+        
+        y_up_train = y_up.iloc[:primary_boundary]
+        y_up_val = y_up.iloc[meta_boundary:val_test_boundary]
+        y_up_test = y_up.iloc[val_test_boundary:]
+        
+        y_down_train = y_down.iloc[:primary_boundary]
+        y_down_val = y_down.iloc[meta_boundary:val_test_boundary]
+        y_down_test = y_down.iloc[val_test_boundary:]
+        
+        y_train_orig = y.iloc[:primary_boundary].values
+        y_meta_orig = y.iloc[primary_boundary:meta_boundary].values
+        y_val_orig = y.iloc[meta_boundary:val_test_boundary].values
+        y_test_orig = y.iloc[val_test_boundary:].values
     
-    y_up_train = y_up.iloc[:train_size - 5]
-    y_up_val = y_up.iloc[train_size:train_size + val_size - 5]
-    y_up_test = y_up.iloc[train_size + val_size:]
-    
-    y_down_train = y_down.iloc[:train_size - 5]
-    y_down_val = y_down.iloc[train_size:train_size + val_size - 5]
-    y_down_test = y_down.iloc[train_size + val_size:]
-    
-    # Original 3-class test targets for combined evaluation
-    y_test_orig = y.iloc[train_size + val_size:].values
-    
-    # LightGBM parameters — binary classification
+    # LightGBM parameters — primary binary classification
     params = {
         "objective": "binary",
         "metric": "binary_logloss",
@@ -238,7 +337,6 @@ def train_pipeline(
         "seed": 42
     }
     
-    metrics = {}
     models = {}
     
     # --- Train UP-detector ---
@@ -247,6 +345,8 @@ def train_pipeline(
     
     sw_up = compute_sample_weight(class_weight="balanced", y=y_up_train)
     train_data_up = lgb.Dataset(X_train, label=y_up_train, weight=sw_up)
+    
+    # For early stopping in primary model, we can use the validation set
     val_data_up = lgb.Dataset(X_val, label=y_up_val, reference=train_data_up)
     
     model_up = lgb.train(
@@ -274,48 +374,118 @@ def train_pipeline(
     )
     models["down"] = model_down
     
-    # --- Auto-tune thresholds on validation set ---
-    # The balanced class weights make both models fire aggressively at 0.5.
-    # We jointly optimize both thresholds on the validation set by maximizing
-    # combined 3-class accuracy — this naturally balances the class distribution
-    # because accuracy peaks when predictions match the true distribution.
+    # --- Train Meta-Model (Step 3) ---
+    logger.info("Training secondary Meta-Model...")
+    from src.labeling.meta_labeling import generate_meta_labels, build_meta_features, train_meta_model
+    
+    prob_up_meta = model_up.predict(X_meta)
+    prob_down_meta = model_down.predict(X_meta)
+    
+    preds_meta, _ = combine_binary_predictions(
+        prob_up_meta, prob_down_meta,
+        up_threshold=0.50, down_threshold=0.50
+    )
+    
+    y_meta_labels_filtered, directional_mask = generate_meta_labels(preds_meta, y_meta_orig)
+    
+    df_features_meta = df_features[meta_mask] if use_triple_barrier and "tb_t_touch_idx" in df_features.columns else df_features.iloc[primary_boundary:meta_boundary]
+    
+    meta_features_all = build_meta_features(df_features_meta, prob_up_meta, prob_down_meta, preds_meta)
+    
+    # Filter meta features and targets to only directional predictions
+    X_meta_train_filtered = meta_features_all[directional_mask]
+    y_meta_train_filtered = y_meta_labels_filtered
+    
+    if len(X_meta_train_filtered) > 10:
+        model_meta = train_meta_model(X_meta_train_filtered, y_meta_train_filtered)
+        models["meta"] = model_meta
+        
+        # Calculate meta-model diagnostics
+        prob_meta_train = model_meta.predict(X_meta_train_filtered)
+        meta_metrics = compute_binary_metrics(y_meta_train_filtered, prob_meta_train, 0.50, "meta")
+        metrics.update(meta_metrics)
+        logger.info(f"Meta-model training metrics: P={meta_metrics['meta_precision']:.3f}, R={meta_metrics['meta_recall']:.3f}, F1={meta_metrics['meta_f1']:.3f}")
+    else:
+        logger.warning("Too few directional signals in TrainMeta split. Creating dummy meta-model.")
+        model_meta = DummyMetaModel(num_features=len(X_meta_train_filtered.columns if not X_meta_train_filtered.empty else []))
+        models["meta"] = model_meta
+        metrics["meta_precision"] = 1.0
+        metrics["meta_recall"] = 1.0
+        metrics["meta_f1"] = 1.0
+        metrics["meta_threshold"] = 0.5
+        metrics["meta_positive_rate"] = 1.0
+    
+    # --- Jointly Auto-tune thresholds on validation set ---
     logger.info("Auto-tuning decision thresholds on validation set...")
     
-    val_prob_up_raw = model_up.predict(X_val)
-    val_prob_down_raw = model_down.predict(X_val)
-    y_val_orig = y.iloc[train_size:train_size + val_size - 5].values
+    val_prob_up = model_up.predict(X_val)
+    val_prob_down = model_down.predict(X_val)
+    
+    df_features_val = df_features[val_mask] if use_triple_barrier and "tb_t_touch_idx" in df_features.columns else df_features.iloc[meta_boundary:val_test_boundary]
     
     best_acc = 0.0
     best_up_thresh = up_threshold
     best_down_thresh = down_threshold
+    best_trust_thresh = 0.50
     
-    for ut in np.arange(0.40, 0.72, 0.02):
-        for dt in np.arange(0.40, 0.72, 0.02):
-            val_preds, _ = combine_binary_predictions(
-                val_prob_up_raw, val_prob_down_raw,
+    # Pre-predict meta probabilities for speed in search loop
+    # We construct validation features for a default combination prediction first
+    val_preds_def, _ = combine_binary_predictions(val_prob_up, val_prob_down, 0.50, 0.50)
+    X_val_meta_def = build_meta_features(df_features_val, val_prob_up, val_prob_down, val_preds_def)
+    val_meta_prob = model_meta.predict(X_val_meta_def)
+    
+    for ut in np.arange(0.40, 0.68, 0.04):
+        for dt in np.arange(0.40, 0.68, 0.04):
+            val_preds_primary, _ = combine_binary_predictions(
+                val_prob_up, val_prob_down,
                 up_threshold=ut, down_threshold=dt
             )
-            acc = np.mean(val_preds == y_val_orig)
-            if acc > best_acc:
-                best_acc = acc
-                best_up_thresh = float(ut)
-                best_down_thresh = float(dt)
-    
+            for tt in np.arange(0.40, 0.70, 0.05):
+                val_preds_final = val_preds_primary.copy()
+                for idx in range(len(val_preds_final)):
+                    if val_preds_final[idx] != 0:
+                        if val_meta_prob[idx] < tt:
+                            val_preds_final[idx] = 0
+                            
+                acc = np.mean(val_preds_final == y_val_orig)
+                if acc > best_acc:
+                    best_acc = acc
+                    best_up_thresh = float(ut)
+                    best_down_thresh = float(dt)
+                    best_trust_thresh = float(tt)
+                    
     up_threshold = best_up_thresh
     down_threshold = best_down_thresh
-    logger.info(f"Optimal thresholds — UP: {up_threshold:.3f}, DOWN: {down_threshold:.3f} "
+    meta_trust_threshold = best_trust_thresh
+    
+    logger.info(f"Optimal thresholds — UP: {up_threshold:.3f}, DOWN: {down_threshold:.3f}, TRUST: {meta_trust_threshold:.3f} "
                 f"(val accuracy: {best_acc:.4f})")
     
     # --- Predict on test set with tuned thresholds ---
     prob_up_test = model_up.predict(X_test)   # P(UP)
     prob_down_test = model_down.predict(X_test)  # P(DOWN)
     
-    preds_class, confidences = combine_binary_predictions(
+    preds_primary, confidences_primary = combine_binary_predictions(
         prob_up_test, prob_down_test,
         up_threshold=up_threshold, down_threshold=down_threshold
     )
     
-    # --- Per-model binary metrics ---
+    df_features_test = df_features.iloc[val_test_boundary:]
+    X_test_meta = build_meta_features(df_features_test, prob_up_test, prob_down_test, preds_primary)
+    
+    prob_meta_test = model_meta.predict(X_test_meta)
+    
+    # Apply meta trust filter
+    preds_final = preds_primary.copy()
+    confidences_final = confidences_primary.copy()
+    
+    for idx in range(len(preds_final)):
+        if preds_final[idx] != 0:
+            confidences_final[idx] = float(prob_meta_test[idx])
+            if prob_meta_test[idx] < meta_trust_threshold:
+                preds_final[idx] = 0
+                
+    # --- Evaluate test set performance ---
     up_metrics = compute_binary_metrics(y_up_test.values, prob_up_test, up_threshold, "up")
     down_metrics = compute_binary_metrics(y_down_test.values, prob_down_test, down_threshold, "down")
     metrics.update(up_metrics)
@@ -324,9 +494,27 @@ def train_pipeline(
     logger.info(f"UP-detector: P={up_metrics['up_precision']:.3f}, R={up_metrics['up_recall']:.3f}, F1={up_metrics['up_f1']:.3f}")
     logger.info(f"DOWN-detector: P={down_metrics['down_precision']:.3f}, R={down_metrics['down_recall']:.3f}, F1={down_metrics['down_f1']:.3f}")
     
-    # --- Combined evaluation ---
-    combined_metrics = evaluate_combined_predictions(y_test_orig, preds_class, confidences)
-    metrics.update(combined_metrics)
+    # Primary model accuracy without meta-filtering
+    primary_eval = evaluate_combined_predictions(y_test_orig, preds_primary, confidences_primary)
+    metrics["primary_only_accuracy"] = primary_eval["accuracy"]
+    metrics["primary_only_high_confidence_accuracy"] = primary_eval["high_confidence_accuracy"]
+    
+    # Final model accuracy with meta-filtering
+    final_eval = evaluate_combined_predictions(y_test_orig, preds_final, confidences_final)
+    metrics.update(final_eval)
+    
+    # Filter stats
+    num_primary_signals = np.sum(preds_primary != 0)
+    num_final_signals = np.sum(preds_final != 0)
+    filter_rate = 1.0 - (num_final_signals / num_primary_signals) if num_primary_signals > 0 else 0.0
+    metrics["meta_filter_rate"] = float(filter_rate)
+    
+    # Acted-upon predictions accuracy (where the meta-model trusted the primary)
+    acted_upon_mask = preds_final != 0
+    acted_upon_count = np.sum(acted_upon_mask)
+    acted_accuracy = np.mean(y_test_orig[acted_upon_mask] == preds_final[acted_upon_mask]) if acted_upon_count > 0 else 0.0
+    metrics["meta_acted_accuracy"] = float(acted_accuracy)
+    metrics["meta_acted_count"] = int(acted_upon_count)
     
     # Naive baselines
     test_counts = pd.Series(y_test_orig).value_counts()
@@ -334,22 +522,26 @@ def train_pipeline(
     naive_majority_acc = np.mean(y_test_orig == majority_test_class)
     metrics["naive_majority_accuracy"] = float(naive_majority_acc)
     
-    logger.info(f"Combined Test Accuracy: {metrics.get('accuracy', 0.0):.4f} (Naive Majority: {naive_majority_acc:.4f})")
+    logger.info(f"Combined Test Accuracy (with Meta-Filter): {final_eval['accuracy']:.4f}")
+    logger.info(f"Primary-Only Accuracy: {metrics['primary_only_accuracy']:.4f}")
+    logger.info(f"Acted-upon Accuracy: {acted_accuracy:.4f} (count={acted_upon_count})")
+    logger.info(f"Meta Filter Rate: {filter_rate:.1%}")
+    logger.info(f"Naive Majority Baseline: {naive_majority_acc:.4f}")
     
     # --- Class distribution check ---
-    pred_counts = pd.Series(preds_class).value_counts(normalize=True)
-    
+    pred_counts = pd.Series(preds_final).value_counts(normalize=True)
     majority_pred_pct = pred_counts.max() if not pred_counts.empty else 0.0
     majority_pred_class = pred_counts.idxmax() if not pred_counts.empty else None
     
     metrics["test_class_distribution"] = {str(int(k)): float(v) for k, v in pred_counts.items()}
-    metrics["model_collapsed"] = bool(majority_pred_pct > 0.90)
+    metrics["model_collapsed"] = bool(majority_pred_pct > 0.90 and majority_pred_class != 0)  # FLAT majority is acceptable
     metrics["up_best_iteration"] = int(model_up.best_iteration)
     metrics["down_best_iteration"] = int(model_down.best_iteration)
     metrics["up_num_trees"] = int(model_up.num_trees())
     metrics["down_num_trees"] = int(model_down.num_trees())
     metrics["up_threshold"] = float(up_threshold)
     metrics["down_threshold"] = float(down_threshold)
+    metrics["meta_trust_threshold"] = float(meta_trust_threshold)
     
     if metrics["model_collapsed"]:
         logger.warning(f"⚠️ REGRESSION WARNING: Combined prediction distribution collapsed! "
@@ -368,11 +560,21 @@ def train_pipeline(
     logger.info(f"Naive Return-Sign Baseline: {naive_sign_acc:.4f}")
     
     # --- Feature importance ---
-    for model_name, model in models.items():
-        importance = model.feature_importance(importance_type="gain")
-        feat_imp = sorted(zip(feature_cols, importance), key=lambda x: x[1], reverse=True)
-        metrics[f"{model_name}_feature_importance"] = {f: float(v) for f, v in feat_imp}
-        logger.info(f"{model_name.upper()}-detector top 5 features: {feat_imp[:5]}")
+    importance_up = model_up.feature_importance(importance_type="gain")
+    feat_imp_up = sorted(zip(feature_cols, importance_up), key=lambda x: x[1], reverse=True)
+    metrics["up_feature_importance"] = {f: float(v) for f, v in feat_imp_up}
+    logger.info(f"UP-detector top 5 features: {feat_imp_up[:5]}")
+    
+    importance_down = model_down.feature_importance(importance_type="gain")
+    feat_imp_down = sorted(zip(feature_cols, importance_down), key=lambda x: x[1], reverse=True)
+    metrics["down_feature_importance"] = {f: float(v) for f, v in feat_imp_down}
+    logger.info(f"DOWN-detector top 5 features: {feat_imp_down[:5]}")
+    
+    if hasattr(model_meta, "feature_importance"):
+        importance_meta = model_meta.feature_importance(importance_type="gain")
+        feat_imp_meta = sorted(zip(X_meta_train_filtered.columns, importance_meta), key=lambda x: x[1], reverse=True)
+        metrics["meta_feature_importance"] = {f: float(v) for f, v in feat_imp_meta}
+        logger.info(f"META-model top 5 features: {feat_imp_meta[:5]}")
     
     # --- Save models ---
     with open(MODEL_UP_PATH, "wb") as f:
@@ -383,18 +585,24 @@ def train_pipeline(
         pickle.dump(model_down, f)
     logger.info(f"DOWN-detector saved to {MODEL_DOWN_PATH}")
     
+    with open(MODEL_META_PATH, "wb") as f:
+        pickle.dump(model_meta, f)
+    logger.info(f"Meta-model saved to {MODEL_META_PATH}")
+    
     # --- Validation set distribution (regression check) ---
-    val_prob_up = model_up.predict(X_val)
-    val_prob_down = model_down.predict(X_val)
-    val_preds, _ = combine_binary_predictions(val_prob_up, val_prob_down, up_threshold, down_threshold)
-    val_counts = pd.Series(val_preds).value_counts(normalize=True)
+    val_preds_final = val_preds_primary.copy()
+    for idx in range(len(val_preds_final)):
+        if val_preds_final[idx] != 0:
+            if val_meta_prob[idx] < meta_trust_threshold:
+                val_preds_final[idx] = 0
+    val_counts = pd.Series(val_preds_final).value_counts(normalize=True)
     metrics["validation_class_distribution"] = {str(int(k)): float(v) for k, v in val_counts.items()}
     
     # --- Backtest equity curve ---
-    test_timestamps = df_features["timestamp"].iloc[train_size + val_size:].values
-    target_returns = df_features["target_return"].iloc[train_size + val_size:].values
+    test_timestamps = df_features["timestamp"].iloc[val_test_boundary:].values
+    target_returns = df_features["target_return"].iloc[val_test_boundary:].values
     
-    strategy_rets = preds_class * target_returns
+    strategy_rets = preds_final * target_returns
     baseline_rets = naive_sign_preds * target_returns
     
     cumulative_strategy = np.cumsum(strategy_rets)
@@ -404,15 +612,14 @@ def train_pipeline(
         "timestamps": test_timestamps.tolist(),
         "model_cumulative_returns": cumulative_strategy.tolist(),
         "baseline_cumulative_returns": cumulative_baseline.tolist(),
-        "model_signals": preds_class.tolist(),
+        "model_signals": preds_final.tolist(),
         "actual_returns": target_returns.tolist()
     }
     
-    # --- Feature columns list (needed for inference to know what the model expects) ---
+    # --- Feature columns list (needed for inference) ---
     metrics["feature_columns"] = feature_cols
     
     # --- Save metrics ---
-    import json
     with open(METRICS_SAVE_PATH, "w") as f:
         json.dump(metrics, f, indent=2)
     logger.info(f"Evaluation metrics saved to {METRICS_SAVE_PATH}")

@@ -156,7 +156,8 @@ def get_all_candles(db_path: str = DEFAULT_DB_PATH, table_name: str = "candles")
     return df
 
 def save_prediction(timestamp: str, predicted_direction: int, confidence: float, 
-                    probs: Tuple[float, float, float], db_path: str = DEFAULT_DB_PATH) -> None:
+                    probs: Tuple[float, float, float], db_path: str = DEFAULT_DB_PATH,
+                    meta_confidence: Optional[float] = None) -> None:
     """Saves or updates a model prediction both in SQLite and predictions_log.jsonl."""
     import json
     prob_down, prob_flat, prob_up = probs
@@ -197,6 +198,9 @@ def save_prediction(timestamp: str, predicted_direction: int, confidence: float,
         "prob_flat": float(prob_flat),
         "prob_up": float(prob_up)
     }
+    
+    if meta_confidence is not None:
+        new_record["meta_confidence"] = float(meta_confidence)
     
     # Retrieve spot price at prediction from candles SQLite table if present
     try:
