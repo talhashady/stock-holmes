@@ -97,9 +97,25 @@ def load_env_dashboard():
 
 load_env_dashboard()
 api_key_default = os.getenv("TWELVE_DATA_API_KEY", "")
+
+# Detect Streamlit Cloud to prevent rate-limiting exhaustion by public traffic
+abs_path = os.path.abspath(__file__).replace("\\", "/")
+is_streamlit_cloud = abs_path.startswith("/app/") or abs_path.startswith("/mount/")
+
+# Require a custom key to unlock triggers on the public cloud deploy
+allow_triggers = not is_streamlit_cloud or (api_key_default and os.getenv("TWELVE_DATA_API_KEY") != api_key_default)
+
+# Render a text input for Twelve Data API Key
 api_key = st.sidebar.text_input("Twelve Data API Key", value=api_key_default, type="password")
 
-if st.sidebar.button("🔄 Ingest Latest Data"):
+# Update trigger permission based on input
+if is_streamlit_cloud and (not api_key or api_key == api_key_default):
+    allow_triggers = False
+    st.sidebar.info("ℹ️ Pipeline execution is disabled on the public demo to prevent Twelve Data rate limit exhaustion. Enter your own Twelve Data API Key below to unlock.")
+else:
+    allow_triggers = True
+
+if st.sidebar.button("🔄 Ingest Latest Data", disabled=not allow_triggers):
     with st.spinner("Fetching live candles from Twelve Data (XAUUSD + EURUSD + USDJPY)..."):
         try:
             results = fetch_and_cache_multi(api_key=api_key)
@@ -112,18 +128,22 @@ if st.sidebar.button("🔄 Ingest Latest Data"):
                     st.sidebar.warning(f"  {sym}: fetch failed (non-critical)")
             st.cache_data.clear()
         except Exception as e:
-            st.sidebar.error(f"Ingestion error: {e}")
+            import sys
+            print(f"Ingestion error: {e}", file=sys.stderr)
+            st.sidebar.error("Ingestion failed. (Operation blocked or invalid key)")
 
-if st.sidebar.button("🤖 Retrain LightGBM"):
+if st.sidebar.button("🤖 Retrain LightGBM", disabled=not allow_triggers):
     with st.spinner("Rebuilding features and training walk-forward pipeline..."):
         try:
             metrics = train_pipeline()
             st.sidebar.success(f"Trained! Test Acc: {metrics.get('accuracy', 0.0):.1%}")
             st.cache_data.clear()
         except Exception as e:
-            st.sidebar.error(f"Training error: {e}")
+            import sys
+            print(f"Training error: {e}", file=sys.stderr)
+            st.sidebar.error("Training failed. (Check database/log files)")
 
-if st.sidebar.button("🎯 Run Inference (Predict)"):
+if st.sidebar.button("🎯 Run Inference (Predict)", disabled=not allow_triggers):
     with st.spinner("Generating fresh 5-minute predictions..."):
         try:
             res = predict_latest()
@@ -133,7 +153,9 @@ if st.sidebar.button("🎯 Run Inference (Predict)"):
             else:
                 st.sidebar.warning("Inference executed but returned no prediction (likely missing history).")
         except Exception as e:
-            st.sidebar.error(f"Inference error: {e}")
+            import sys
+            print(f"Inference error: {e}", file=sys.stderr)
+            st.sidebar.error("Inference failed. (Insufficient history or model missing)")
 
 def sync_data_from_github():
     import urllib.request

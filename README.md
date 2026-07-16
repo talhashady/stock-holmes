@@ -167,6 +167,14 @@ The app will open automatically in your browser at `http://localhost:8501`.
  - **Triple-Barrier & Meta-Labeling**: Implementing path-dependency via ATR-scaled profit-taking/stop-loss boundaries alongside a secondary LightGBM meta-model trust filter provides a robust filtering system for live serving.
  - **Lookahead-Safe Purging & Feature Alignment**: The pipeline purges training overlap boundaries based on barrier resolution index and aligns feature matrices using pandas reindexing to guarantee crash-free inference.
 
+## 🔒 Security Notes
+
+Stock Holmes is designed with supply-chain and credential safety at its core:
+- **Secrets Management**: Live Twelve Data API keys are secured via GitHub Actions Secrets and Streamlit Secrets. No raw credentials are ever tracked in history or hardcoded in configuration files.
+- **Error Redaction**: Active exception sanitization automatically masks API key occurrences with `********` in standard log outputs.
+- **Access Control**: Live pipeline execution triggers (`Ingest Data`, `Retrain LightGBM`) on the public dashboard are disabled unless the viewer enters a personal Twelve Data API key, protecting resources from public exhaustion.
+- **Strict Dependency Pinning**: Dependencies are strictly pinned in `requirements.txt` to eliminate supply-chain vulnerability introduction during container rebuilds.
+
 ## 📄 License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
