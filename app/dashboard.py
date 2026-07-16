@@ -205,75 +205,60 @@ def load_env_dashboard():
                     os.environ[key.strip()] = val.strip()
 
 load_env_dashboard()
-api_key_default = os.getenv("TWELVE_DATA_API_KEY", "")
 
-# Detect Streamlit Cloud to prevent rate-limiting exhaustion by public traffic
+# Detect Streamlit Cloud to set default API key value to blank
 abs_path = os.path.abspath(__file__).replace("\\", "/")
 is_streamlit_cloud = abs_path.startswith("/app/") or abs_path.startswith("/mount/")
 
-# Require a custom key to unlock triggers on the public cloud deploy
-allow_triggers = not is_streamlit_cloud or (api_key_default and os.getenv("TWELVE_DATA_API_KEY") != api_key_default)
+if is_streamlit_cloud:
+    api_key_default = ""
+else:
+    api_key_default = os.getenv("TWELVE_DATA_API_KEY", "")
 
 # Render a text input for Twelve Data API Key
 api_key = st.sidebar.text_input("Twelve Data API Key", value=api_key_default, type="password")
 
-# Update trigger permission based on input
-if is_streamlit_cloud and (not api_key or api_key == api_key_default):
-    allow_triggers = False
-    st.sidebar.info("ℹ️ Pipeline execution is disabled on the public demo to prevent Twelve Data rate limit exhaustion. Enter your own Twelve Data API Key below to unlock.")
-else:
-    allow_triggers = True
-
-if st.sidebar.button("🔄 Ingest Latest Data", disabled=not allow_triggers):
-    if not allow_triggers:
-        st.sidebar.error("Operation not allowed (Security Guard).")
-    else:
-        with st.spinner("Fetching live candles from Twelve Data (XAUUSD + EURUSD + USDJPY)..."):
-            try:
-                results = fetch_and_cache_multi(api_key=api_key)
-                total_inserted = sum(v for v in results.values() if v > 0)
-                st.sidebar.success(f"Fetched and cached {total_inserted} new candles across {len(results)} symbols!")
-                for sym, count in results.items():
-                    if count >= 0:
-                        st.sidebar.text(f"  {sym}: {count} new candles")
-                    else:
-                        st.sidebar.warning(f"  {sym}: fetch failed (non-critical)")
-                st.cache_data.clear()
-            except Exception as e:
-                import sys
-                print(f"Ingestion error: {e}", file=sys.stderr)
-                st.sidebar.error("Ingestion failed. (Operation blocked or invalid key)")
-
-if st.sidebar.button("🤖 Retrain LightGBM", disabled=not allow_triggers):
-    if not allow_triggers:
-        st.sidebar.error("Operation not allowed (Security Guard).")
-    else:
-        with st.spinner("Rebuilding features and training walk-forward pipeline..."):
-            try:
-                metrics = train_pipeline()
-                st.sidebar.success(f"Trained! Test Acc: {metrics.get('accuracy', 0.0):.1%}")
-                st.cache_data.clear()
-            except Exception as e:
-                import sys
-                print(f"Training error: {e}", file=sys.stderr)
-                st.sidebar.error("Training failed. (Check database/log files)")
-
-if st.sidebar.button("🎯 Run Inference (Predict)", disabled=not allow_triggers):
-    if not allow_triggers:
-        st.sidebar.error("Operation not allowed (Security Guard).")
-    else:
-        with st.spinner("Generating fresh 5-minute predictions..."):
-            try:
-                res = predict_latest()
-                if res:
-                    st.sidebar.success("Latest prediction saved!")
-                    st.cache_data.clear()
+if st.sidebar.button("🔄 Ingest Latest Data"):
+    with st.spinner("Fetching live candles from Twelve Data (XAUUSD + EURUSD + USDJPY)..."):
+        try:
+            results = fetch_and_cache_multi(api_key=api_key)
+            total_inserted = sum(v for v in results.values() if v > 0)
+            st.sidebar.success(f"Fetched and cached {total_inserted} new candles across {len(results)} symbols!")
+            for sym, count in results.items():
+                if count >= 0:
+                    st.sidebar.text(f"  {sym}: {count} new candles")
                 else:
-                    st.sidebar.warning("Inference executed but returned no prediction (likely missing history).")
-            except Exception as e:
-                import sys
-                print(f"Inference error: {e}", file=sys.stderr)
-                st.sidebar.error("Inference failed. (Insufficient history or model missing)")
+                    st.sidebar.warning(f"  {sym}: fetch failed (non-critical)")
+            st.cache_data.clear()
+        except Exception as e:
+            import sys
+            print(f"Ingestion error: {e}", file=sys.stderr)
+            st.sidebar.error("Ingestion failed. (Operation blocked or invalid key)")
+
+if st.sidebar.button("🤖 Retrain LightGBM"):
+    with st.spinner("Rebuilding features and training walk-forward pipeline..."):
+        try:
+            metrics = train_pipeline()
+            st.sidebar.success(f"Trained! Test Acc: {metrics.get('accuracy', 0.0):.1%}")
+            st.cache_data.clear()
+        except Exception as e:
+            import sys
+            print(f"Training error: {e}", file=sys.stderr)
+            st.sidebar.error("Training failed. (Check database/log files)")
+
+if st.sidebar.button("🎯 Run Inference (Predict)"):
+    with st.spinner("Generating fresh 5-minute predictions..."):
+        try:
+            res = predict_latest()
+            if res:
+                st.sidebar.success("Latest prediction saved!")
+                st.cache_data.clear()
+            else:
+                st.sidebar.warning("Inference executed but returned no prediction (likely missing history).")
+        except Exception as e:
+            import sys
+            print(f"Inference error: {e}", file=sys.stderr)
+            st.sidebar.error("Inference failed. (Insufficient history or model missing)")
 
 def sync_data_from_github():
     import urllib.request
@@ -422,13 +407,7 @@ col1, col2, col3 = st.columns(3)
 
 # Latest candle
 latest_candle = candles.iloc[-1]
-col1.markdown("""
-<div class="evidence-card evidence-card-1">
-    <h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent);">💵 CURRENT GOLD SPOT</h4>
-    <h2 style="font-family: 'IBM Plex Mono', monospace; font-size: 32px; margin: 10px 0; color: var(--aged-paper);">${:,.2f}</h2>
-    <p style="color: #64748b; font-size: 12px; margin: 0;">Case Log: {} UTC</p>
-</div>
-""".format(latest_candle["close"], latest_candle["timestamp"]), unsafe_allow_html=True)
+col1.markdown(f'<div class="evidence-card evidence-card-1"><h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent);">💵 CURRENT GOLD SPOT</h4><h2 style="font-family: \'IBM Plex Mono\', monospace; font-size: 32px; margin: 10px 0; color: var(--aged-paper);">${latest_candle["close"]:,.2f}</h2><p style="color: #64748b; font-size: 12px; margin: 0;">Case Log: {latest_candle["timestamp"]} UTC</p></div>', unsafe_allow_html=True)
 
 # Latest prediction
 if not preds.empty:
@@ -451,41 +430,30 @@ if not preds.empty:
         color = "var(--brass-accent)"
         dir_text = "➡️ FLAT LEAD"
         
-    col2.markdown("""
-    <div class="evidence-card evidence-card-2">
-        <h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent);">🕵️‍♂️ FORECAST LEAD (5M)</h4>
-        <h2 style="font-family: 'Special Elite', monospace; font-size: 32px; margin: 10px 0; color: {};">{}</h2>
-        <p style="color: #64748b; font-size: 12px; margin: 0;">Certainty: {:.1%}{}</p>
-    </div>
-    """.format(color, dir_text, conf, meta_info), unsafe_allow_html=True)
+    col2.markdown(f'<div class="evidence-card evidence-card-2"><h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent);">🕵️‍♂️ FORECAST LEAD (5M)</h4><h2 style="font-family: \'Special Elite\', monospace; font-size: 32px; margin: 10px 0; color: {color};">{dir_text}</h2><p style="color: #64748b; font-size: 12px; margin: 0;">Certainty: {conf:.1%}{meta_info}</p></div>', unsafe_allow_html=True)
     
     # SVG Certainty Polygraph Gauge
     angle = (conf - 0.5) * 140.0
-    col3.markdown("""
-    <div class="evidence-card evidence-card-3" style="height: 100%;">
-        <h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; text-align: center; color: var(--brass-accent);">📊 CERTAINTY GAUGE</h4>
-        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-top: 10px;">
-            <svg width="150" height="55" viewBox="0 0 160 80">
-                <!-- Gauge Arc -->
-                <path d="M 20 70 A 60 60 0 0 1 140 70" fill="none" stroke="#2a303c" stroke-width="8" stroke-linecap="round"/>
-                <path d="M 20 70 A 60 60 0 0 1 140 70" fill="none" stroke="var(--brass-accent)" stroke-width="2" stroke-dasharray="2 4"/>
-                
-                <!-- Center Hub -->
-                <circle cx="80" cy="70" r="6" fill="var(--brass-accent)"/>
-                
-                <!-- Sweeping Needle -->
-                <line class="gauge-needle" x1="80" y1="70" x2="80" y2="20" stroke="var(--evidence-red)" stroke-width="4" stroke-linecap="round"
-                      transform="rotate({}, 80, 70)"/>
-            </svg>
-            <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: #64748b; margin-top: 2px;">
-                DOWN: {:.0%} | FLAT: {:.0%} | UP: {:.0%}
-            </div>
-        </div>
-    </div>
-    """.format(angle, latest_pred["prob_down"], latest_pred["prob_flat"], latest_pred["prob_up"]), unsafe_allow_html=True)
+    gauge_html = (
+        f'<div class="evidence-card evidence-card-3" style="height: 100%;">'
+        f'<h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; text-align: center; color: var(--brass-accent);">📊 CERTAINTY GAUGE</h4>'
+        f'<div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin-top: 10px;">'
+        f'<svg width="150" height="55" viewBox="0 0 160 80">'
+        f'<path d="M 20 70 A 60 60 0 0 1 140 70" fill="none" stroke="#2a303c" stroke-width="8" stroke-linecap="round"/>'
+        f'<path d="M 20 70 A 60 60 0 0 1 140 70" fill="none" stroke="var(--brass-accent)" stroke-width="2" stroke-dasharray="2 4"/>'
+        f'<circle cx="80" cy="70" r="6" fill="var(--brass-accent)"/>'
+        f'<line class="gauge-needle" x1="80" y1="70" x2="80" y2="20" stroke="var(--evidence-red)" stroke-width="4" stroke-linecap="round" transform="rotate({angle}, 80, 70)"/>'
+        f'</svg>'
+        f'<div style="font-family: \'IBM Plex Mono\', monospace; font-size: 11px; color: #64748b; margin-top: 2px;">'
+        f'DOWN: {latest_pred["prob_down"]:.0%} | FLAT: {latest_pred["prob_flat"]:.0%} | UP: {latest_pred["prob_up"]:.0%}'
+        f'</div>'
+        f'</div>'
+        f'</div>'
+    )
+    col3.markdown(gauge_html, unsafe_allow_html=True)
 else:
-    col2.info("INSUFFICIENT EVIDENCE — awaiting more resolved cases")
-    col3.info("INSUFFICIENT EVIDENCE — awaiting more resolved cases")
+    col2.markdown('<div class="evidence-card evidence-card-2"><h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent);">🕵️‍♂️ FORECAST LEAD (5M)</h4><h2 style="font-family: \'Special Elite\', monospace; font-size: 20px; margin: 15px 0; color: var(--brass-accent);">INSUFFICIENT EVIDENCE</h2></div>', unsafe_allow_html=True)
+    col3.markdown('<div class="evidence-card evidence-card-3"><h4 style="margin: 0; font-size: 13px; letter-spacing: 1px; color: var(--brass-accent); text-align: center;">📊 CERTAINTY GAUGE</h4><h2 style="font-family: \'Special Elite\', monospace; font-size: 20px; margin: 15px 0; color: var(--brass-accent); text-align: center;">NO LOGS YET</h2></div>', unsafe_allow_html=True)
 
 # ----------------- SECTION 2: CHARTS & MOVEMENT -----------------
 st.markdown("---")
@@ -830,26 +798,26 @@ with tab4:
                 np.where(display_preds["predicted_direction"] == display_preds["actual_direction"], "✅ CORRECT", "❌ WRONG")
             )
             
-        # Custom HTML Case File Ledger Table
-        html = """
-        <div style="overflow-x: auto; margin-top: 15px;">
-        <table style="width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; background-color: var(--panel-surface); color: var(--aged-paper); font-size: 13px;">
-          <thead>
-            <tr style="border-bottom: 2px solid var(--brass-accent); text-align: left;">
-              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">TIMESTAMP</th>
-              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">LEAD FORECAST</th>
-              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">CERTAINTY</th>
-        """
+        # Custom HTML Case File Ledger Table (constructed as clean string list to avoid markdown code-block issues)
+        html_lines = [
+            '<div style="overflow-x: auto; margin-top: 15px;">',
+            '<table style="width: 100%; border-collapse: collapse; font-family: \'IBM Plex Mono\', monospace; background-color: var(--panel-surface); color: var(--aged-paper); font-size: 13px;">',
+            '<thead>',
+            '<tr style="border-bottom: 2px solid var(--brass-accent); text-align: left;">',
+            '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">TIMESTAMP</th>',
+            '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">LEAD FORECAST</th>',
+            '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">CERTAINTY</th>'
+        ]
         if "meta_confidence" in display_preds.columns:
-            html += '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">META TRUST</th>'
-        html += """
-              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">OUTCOME</th>
-              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">ACTUAL CLOSE</th>
-              <th style="font-family: 'Special Elite', monospace; padding: 12px; color: var(--brass-accent);">STATUS STAMP</th>
-            </tr>
-          </thead>
-          <tbody>
-        """
+            html_lines.append('<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">META TRUST</th>')
+        html_lines.extend([
+            '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">OUTCOME</th>',
+            '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">ACTUAL CLOSE</th>',
+            '<th style="font-family: \'Special Elite\', monospace; padding: 12px; color: var(--brass-accent);">STATUS STAMP</th>',
+            '</tr>',
+            '</thead>',
+            '<tbody>'
+        ])
         
         for idx, row in display_preds.reset_index(drop=True).head(50).iterrows():
             bg_style = "background-color: #151a21;" if idx % 2 == 1 else "background-color: var(--panel-surface);"
@@ -884,23 +852,20 @@ with tab4:
                 m_conf = f"{row['meta_confidence']:.1%}" if pd.notna(row.get("meta_confidence")) else "—"
                 meta_conf_td = f'<td style="padding: 10px 12px;">{m_conf}</td>'
                 
-            html += f"""
-            <tr style="{bg_style} border-bottom: 1px solid rgba(255,255,255,0.02);">
-              <td style="padding: 10px 12px;">{row['timestamp']}</td>
-              <td style="padding: 10px 12px; {pred_color}">{pred_str}</td>
-              <td style="padding: 10px 12px;">{row['confidence']:.1%}</td>
-              {meta_conf_td}
-              <td style="padding: 10px 12px; {actual_color}">{actual_str}</td>
-              <td style="padding: 10px 12px;">{close_val}</td>
-              <td style="padding: 10px 12px;">{stamp_html}</td>
-            </tr>
-            """
+            html_lines.append(
+                f'<tr style="{bg_style} border-bottom: 1px solid rgba(255,255,255,0.02);">'
+                f'<td style="padding: 10px 12px;">{row["timestamp"]}</td>'
+                f'<td style="padding: 10px 12px; {pred_color}">{pred_str}</td>'
+                f'<td style="padding: 10px 12px;">{row["confidence"]:.1%}</td>'
+                f'{meta_conf_td}'
+                f'<td style="padding: 10px 12px; {actual_color}">{actual_str}</td>'
+                f'<td style="padding: 10px 12px;">{close_val}</td>'
+                f'<td style="padding: 10px 12px;">{stamp_html}</td>'
+                f'</tr>'
+            )
             
-        html += """
-          </tbody>
-        </table>
-        </div>
-        """
+        html_lines.extend(['</tbody>', '</table>', '</div>'])
+        html = "".join(html_lines)
         st.markdown(html, unsafe_allow_html=True)
     else:
         st.markdown('<div style="font-family: \'Special Elite\', monospace; padding: 20px; text-align: center; border: 1px dashed var(--brass-accent); color: var(--brass-accent);">INSUFFICIENT EVIDENCE — awaiting more resolved cases</div>', unsafe_allow_html=True)
