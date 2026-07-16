@@ -4,6 +4,65 @@ import pandas as pd
 import numpy as np
 from typing import Optional, List, Tuple
 from contextlib import contextmanager
+import logging
+
+logger = logging.getLogger(__name__)
+
+def validate_prediction_record(
+    timestamp: str,
+    predicted_direction: int,
+    confidence: float,
+    probs: Tuple[float, float, float],
+    meta_confidence: Optional[float] = None
+) -> None:
+    """Validates prediction input values to prevent log corruption."""
+    import datetime
+    
+    # 1. Validate timestamp format (expected YYYY-MM-DD HH:MM:SS)
+    if not isinstance(timestamp, str):
+        raise ValueError(f"Invalid timestamp type: expected str, got {type(timestamp)}")
+    try:
+        datetime.datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        raise ValueError(f"Invalid timestamp format: '{timestamp}' must match 'YYYY-MM-DD HH:MM:SS'")
+        
+    # 2. Validate predicted_direction is in [-1, 0, 1]
+    if predicted_direction not in (-1, 0, 1):
+        raise ValueError(f"Invalid predicted_direction: {predicted_direction}. Must be -1, 0, or 1.")
+        
+    # 3. Validate confidence is a valid, non-NaN float in [0.0, 1.0]
+    try:
+        conf_float = float(confidence)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid confidence type: expected float-like, got {type(confidence)}")
+    if np.isnan(conf_float) or np.isinf(conf_float):
+        raise ValueError("Confidence cannot be NaN or Inf.")
+    if not (0.0 <= conf_float <= 1.0):
+        raise ValueError(f"Confidence value out of bounds [0, 1]: {conf_float}")
+        
+    # 4. Validate probs tuple has length 3 and contains valid non-NaN floats in [0.0, 1.0]
+    if not isinstance(probs, (tuple, list)) or len(probs) != 3:
+        raise ValueError(f"Invalid probs structure: expected tuple of length 3, got {probs}")
+    for i, p in enumerate(probs):
+        try:
+            pf = float(p)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid probability type at index {i}: expected float-like, got {type(p)}")
+        if np.isnan(pf) or np.isinf(pf):
+            raise ValueError(f"Probability at index {i} cannot be NaN or Inf.")
+        if not (0.0 <= pf <= 1.0):
+            raise ValueError(f"Probability at index {i} out of bounds [0, 1]: {pf}")
+            
+    # 5. Validate meta_confidence is a valid non-NaN float in [0.0, 1.0] if present
+    if meta_confidence is not None:
+        try:
+            mcf = float(meta_confidence)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid meta_confidence type: expected float-like, got {type(meta_confidence)}")
+        if np.isnan(mcf) or np.isinf(mcf):
+            raise ValueError("Meta-confidence cannot be NaN or Inf.")
+        if not (0.0 <= mcf <= 1.0):
+            raise ValueError(f"Meta-confidence out of bounds [0, 1]: {mcf}")
 
 DEFAULT_DB_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -160,6 +219,14 @@ def save_prediction(timestamp: str, predicted_direction: int, confidence: float,
                     meta_confidence: Optional[float] = None) -> None:
     """Saves or updates a model prediction both in SQLite and predictions_log.jsonl."""
     import json
+    
+    # Validate prediction inputs before persisting to SQLite and JSONL
+    try:
+        validate_prediction_record(timestamp, predicted_direction, confidence, probs, meta_confidence)
+    except ValueError as e:
+        logger.error(f"Prediction rejected: {e} (timestamp='{timestamp}', direction={predicted_direction}, confidence={confidence})")
+        raise e
+        
     prob_down, prob_flat, prob_up = probs
     
     # 1. Save to SQLite

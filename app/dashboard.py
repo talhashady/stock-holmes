@@ -116,46 +116,55 @@ else:
     allow_triggers = True
 
 if st.sidebar.button("🔄 Ingest Latest Data", disabled=not allow_triggers):
-    with st.spinner("Fetching live candles from Twelve Data (XAUUSD + EURUSD + USDJPY)..."):
-        try:
-            results = fetch_and_cache_multi(api_key=api_key)
-            total_inserted = sum(v for v in results.values() if v > 0)
-            st.sidebar.success(f"Fetched and cached {total_inserted} new candles across {len(results)} symbols!")
-            for sym, count in results.items():
-                if count >= 0:
-                    st.sidebar.text(f"  {sym}: {count} new candles")
-                else:
-                    st.sidebar.warning(f"  {sym}: fetch failed (non-critical)")
-            st.cache_data.clear()
-        except Exception as e:
-            import sys
-            print(f"Ingestion error: {e}", file=sys.stderr)
-            st.sidebar.error("Ingestion failed. (Operation blocked or invalid key)")
+    if not allow_triggers:
+        st.sidebar.error("Operation not allowed (Security Guard).")
+    else:
+        with st.spinner("Fetching live candles from Twelve Data (XAUUSD + EURUSD + USDJPY)..."):
+            try:
+                results = fetch_and_cache_multi(api_key=api_key)
+                total_inserted = sum(v for v in results.values() if v > 0)
+                st.sidebar.success(f"Fetched and cached {total_inserted} new candles across {len(results)} symbols!")
+                for sym, count in results.items():
+                    if count >= 0:
+                        st.sidebar.text(f"  {sym}: {count} new candles")
+                    else:
+                        st.sidebar.warning(f"  {sym}: fetch failed (non-critical)")
+                st.cache_data.clear()
+            except Exception as e:
+                import sys
+                print(f"Ingestion error: {e}", file=sys.stderr)
+                st.sidebar.error("Ingestion failed. (Operation blocked or invalid key)")
 
 if st.sidebar.button("🤖 Retrain LightGBM", disabled=not allow_triggers):
-    with st.spinner("Rebuilding features and training walk-forward pipeline..."):
-        try:
-            metrics = train_pipeline()
-            st.sidebar.success(f"Trained! Test Acc: {metrics.get('accuracy', 0.0):.1%}")
-            st.cache_data.clear()
-        except Exception as e:
-            import sys
-            print(f"Training error: {e}", file=sys.stderr)
-            st.sidebar.error("Training failed. (Check database/log files)")
+    if not allow_triggers:
+        st.sidebar.error("Operation not allowed (Security Guard).")
+    else:
+        with st.spinner("Rebuilding features and training walk-forward pipeline..."):
+            try:
+                metrics = train_pipeline()
+                st.sidebar.success(f"Trained! Test Acc: {metrics.get('accuracy', 0.0):.1%}")
+                st.cache_data.clear()
+            except Exception as e:
+                import sys
+                print(f"Training error: {e}", file=sys.stderr)
+                st.sidebar.error("Training failed. (Check database/log files)")
 
 if st.sidebar.button("🎯 Run Inference (Predict)", disabled=not allow_triggers):
-    with st.spinner("Generating fresh 5-minute predictions..."):
-        try:
-            res = predict_latest()
-            if res:
-                st.sidebar.success("Latest prediction saved!")
-                st.cache_data.clear()
-            else:
-                st.sidebar.warning("Inference executed but returned no prediction (likely missing history).")
-        except Exception as e:
-            import sys
-            print(f"Inference error: {e}", file=sys.stderr)
-            st.sidebar.error("Inference failed. (Insufficient history or model missing)")
+    if not allow_triggers:
+        st.sidebar.error("Operation not allowed (Security Guard).")
+    else:
+        with st.spinner("Generating fresh 5-minute predictions..."):
+            try:
+                res = predict_latest()
+                if res:
+                    st.sidebar.success("Latest prediction saved!")
+                    st.cache_data.clear()
+                else:
+                    st.sidebar.warning("Inference executed but returned no prediction (likely missing history).")
+            except Exception as e:
+                import sys
+                print(f"Inference error: {e}", file=sys.stderr)
+                st.sidebar.error("Inference failed. (Insufficient history or model missing)")
 
 def sync_data_from_github():
     import urllib.request
